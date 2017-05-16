@@ -55,10 +55,9 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
 
     # read the entire graph CSV into rows of edges
     if (strm_piece_num == None):
-        edge_rows = pd.read_csv('{}.tsv'.format(input_filename), delimiter='\t', header=None).as_matrix()
+        edge_rows = np.loadtxt('{}.tsv'.format(input_filename), delimiter='\t', dtype=np.int64)
     else:
-        edge_rows = pd.read_csv('{}_{}.tsv'.format(input_filename, strm_piece_num), delimiter='\t',
-                                header=None).as_matrix()
+        edge_rows = np.loadtxt('{}_{}.tsv'.format(input_filename, strm_piece_num), delimiter='\t', dtype=np.int64)
 
     if (out_neighbors == None):  # no previously loaded streaming pieces
         N = edge_rows[:, 0:2].max()  # number of nodes
