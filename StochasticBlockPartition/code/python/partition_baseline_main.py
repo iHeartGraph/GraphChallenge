@@ -6,13 +6,14 @@ import os, sys, argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-p", "--parts", type=int, required=False)
+parser.add_argument("-v", "--verbose", type=bool, required=False, default=False)
 parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 args = parser.parse_args()
 
 input_filename = args.input_filename
 true_partition_available = True
 visualize_graph = False  # whether to plot the graph layout colored with intermediate partitions
-verbose = True  # whether to print updates of the partitioning
+verbose = args.verbose  # whether to print updates of the partitioning
 
 if not os.path.isfile(input_filename + '.tsv') and not os.path.isfile(input_filename + '_1.tsv'):
 	print("File doesn't exist: '{}'!".format(input_filename))
