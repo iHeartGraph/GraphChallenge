@@ -8,7 +8,6 @@
                Physical review letters 110, no. 14 (2013): 148701.
         .. [3] Karrer, Brian, and Mark EJ Newman. 'Stochastic blockmodels and community structure in networks.'
                Physical Review E 83, no. 1 (2011): 016107."""
-import pandas as pd
 import numpy as np
 from scipy import sparse as sparse
 import scipy.misc as misc
@@ -97,8 +96,7 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
 
     if load_true_partition:
         # read the entire true partition CSV into rows of partitions
-        true_b_rows = pd.read_csv('{}_truePartition.tsv'.format(input_filename), delimiter='\t',
-                                  header=None).as_matrix()
+        true_b_rows = np.loadtxt('{}_truePartition.tsv'.format(input_filename), delimiter='\t', dtype=np.int64)
         true_b = np.ones(true_b_rows.shape[0], dtype=int) * -1  # initialize truth assignment to -1 for 'unknown'
         for i in range(true_b_rows.shape[0]):
             true_b[true_b_rows[i, 0] - 1] = int(
