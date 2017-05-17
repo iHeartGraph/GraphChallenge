@@ -243,12 +243,11 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
     u = b[rand_neighbor]
     # propose a new block randomly
     if np.random.uniform() <= B/float(d[u]+B):  # chance inversely prop. to block_degree
-        if agg_move:  # force proposal to be different from current block
-            candidates = set(range(B))
-            candidates.discard(r)
-            s = np.random.choice(list(candidates))
+        if agg_move:
+            # force proposal to be different from current block via a random offset and modulo
+            s = (r + 1 + np.random.randint(B - 1)) % B
         else:
-            s = np.random.randint(B)
+            s = np.array([np.random.randint(B)])
     else:  # propose by random draw from neighbors of block partition[rand_neighbor]
         if use_sparse:
             multinomial_prob = (M[u, :].toarray().transpose() + M[:, u].toarray()) / float(d[u])
@@ -257,14 +256,13 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
         if agg_move:  # force proposal to be different from current block
             multinomial_prob[r] = 0
             if multinomial_prob.sum() == 0:  # the current block has no neighbors. randomly propose a different block
-                candidates = set(range(B))
-                candidates.discard(r)
-                s = np.random.choice(list(candidates))
+                s = (r + 1 + np.random.randint(B - 1)) % B
                 return s, k_out, k_in, k
             else:
                 multinomial_prob = multinomial_prob / multinomial_prob.sum()
         candidates = multinomial_prob.nonzero()[0]
         s = candidates[np.flatnonzero(np.random.multinomial(1, multinomial_prob[candidates].ravel()))[0]]
+        s = np.array([s])
     return s, k_out, k_in, k
 
 
@@ -337,16 +335,19 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
     else:
         M_s_row = M[s, :].copy()
         M_s_col = M[:, s].copy()
-    M_s_row[b_out] += count_out
-    M_s_row[r] -= np.sum(count_in[np.where(b_in == s)])
-    M_s_row[s] += np.sum(count_in[np.where(b_in == s)])
-    M_s_row[r] -= count_self
-    M_s_row[s] += count_self
-    M_s_col[b_in] += count_in.reshape(M_s_col[b_in].shape)
-    M_s_col[r] -= np.sum(count_out[np.where(b_out == s)])
-    M_s_col[s] += np.sum(count_out[np.where(b_out == s)])
-    M_s_col[r] -= count_self
-    M_s_col[s] += count_self
+
+    #print("shapes:", s, M_s_row.shape, M_s_col.shape)
+
+    M_s_row[:, b_out] += count_out
+    M_s_row[:, r] -= np.sum(count_in[np.where(b_in == s)])
+    M_s_row[:, s] += np.sum(count_in[np.where(b_in == s)])
+    M_s_row[:, r] -= count_self
+    M_s_row[:, s] += count_self
+    M_s_col[b_in, :] += count_in.reshape(M_s_col[b_in].shape)
+    M_s_col[r, :] -= np.sum(count_out[np.where(b_out == s)])
+    M_s_col[s, :] += np.sum(count_out[np.where(b_out == s)])
+    M_s_col[r, :] -= count_self
+    M_s_col[s, :] += count_self
     return M_r_row, M_s_row, M_r_col, M_s_col
 
 
@@ -550,33 +551,34 @@ def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_
     d_out_ = d_out[idx]
 
     # only keep non-zero entries to avoid unnecessary computation
-    d_in_new_r_row = d_in_new[M_r_row.nonzero()]
-    d_in_new_s_row = d_in_new[M_s_row.nonzero()]
-    M_r_row = M_r_row[M_r_row.nonzero()]
-    M_s_row = M_s_row[M_s_row.nonzero()]
-    d_out_new_r_col = d_out_new_[M_r_col.nonzero()]
-    d_out_new_s_col = d_out_new_[M_s_col.nonzero()]
-    M_r_col = M_r_col[M_r_col.nonzero()]
-    M_s_col = M_s_col[M_s_col.nonzero()]
-    d_in_r_t1 = d_in[M_r_t1.nonzero()]
-    d_in_s_t1 = d_in[M_s_t1.nonzero()]
-    M_r_t1= M_r_t1[M_r_t1.nonzero()]
-    M_s_t1 = M_s_t1[M_s_t1.nonzero()]
-    d_out_r_col = d_out_[M_t2_r.nonzero()]
-    d_out_s_col = d_out_[M_t2_s.nonzero()]
-    M_t2_r = M_t2_r[M_t2_r.nonzero()]
-    M_t2_s = M_t2_s[M_t2_s.nonzero()]
+    d_in_new_r_row = d_in_new[M_r_row.ravel() != 0]
+    d_in_new_s_row = d_in_new[M_s_row.ravel() != 0]
+
+    M_r_row = M_r_row[M_r_row != 0]
+    M_s_row = M_s_row[M_s_row != 0]
+    d_out_new_r_col = d_out_new_[M_r_col != 0]
+    d_out_new_s_col = d_out_new_[M_s_col.ravel() != 0]
+    M_r_col = M_r_col[M_r_col != 0]
+    M_s_col = M_s_col[M_s_col != 0]
+    d_in_r_t1 = d_in[M_r_t1 != 0]
+    d_in_s_t1 = d_in[M_s_t1.ravel() != 0]
+    M_r_t1= M_r_t1[M_r_t1 != 0]
+    M_s_t1 = M_s_t1[M_s_t1 != 0]
+    d_out_r_col = d_out_[M_t2_r != 0]
+    d_out_s_col = d_out_[M_t2_s.ravel() != 0]
+    M_t2_r = M_t2_r[M_t2_r != 0]
+    M_t2_s = M_t2_s[M_t2_s != 0]
 
     # sum over the two changed rows and cols
-    delta_entropy = 0
-    delta_entropy -= np.sum(M_r_row * np.log(M_r_row.astype(float) / d_in_new_r_row / d_out_new[r]))
-    delta_entropy -= np.sum(M_s_row * np.log(M_s_row.astype(float) / d_in_new_s_row / d_out_new[s]))
-    delta_entropy -= np.sum(M_r_col * np.log(M_r_col.astype(float) / d_out_new_r_col / d_in_new[r]))
-    delta_entropy -= np.sum(M_s_col * np.log(M_s_col.astype(float) / d_out_new_s_col / d_in_new[s]))
-    delta_entropy += np.sum(M_r_t1 * np.log(M_r_t1.astype(float) / d_in_r_t1 / d_out[r]))
-    delta_entropy += np.sum(M_s_t1 * np.log(M_s_t1.astype(float) / d_in_s_t1 / d_out[s]))
-    delta_entropy += np.sum(M_t2_r * np.log(M_t2_r.astype(float) / d_out_r_col / d_in[r]))
-    delta_entropy += np.sum(M_t2_s * np.log(M_t2_s.astype(float) / d_out_s_col / d_in[s]))
+    delta_entropy = 0.0
+    delta_entropy -= np.sum(M_r_row * np.log(M_r_row.astype(float) / (d_in_new_r_row * d_out_new[r])))
+    delta_entropy -= np.sum(M_s_row * np.log(M_s_row.astype(float) / (d_in_new_s_row * d_out_new[s])))
+    delta_entropy -= np.sum(M_r_col * np.log(M_r_col.astype(float) / (d_out_new_r_col * d_in_new[r])))
+    delta_entropy -= np.sum(M_s_col * np.log(M_s_col.astype(float) / (d_out_new_s_col * d_in_new[s])))
+    delta_entropy += np.sum(M_r_t1 * np.log(M_r_t1.astype(float) / (d_in_r_t1 * d_out[r])))
+    delta_entropy += np.sum(M_s_t1 * np.log(M_s_t1.astype(float) / (d_in_s_t1 * d_out[s])))
+    delta_entropy += np.sum(M_t2_r * np.log(M_t2_r.astype(float) / (d_out_r_col * d_in[r])))
+    delta_entropy += np.sum(M_t2_s * np.log(M_t2_s.astype(float) / (d_out_s_col * d_in[s])))
     return delta_entropy
 
 
