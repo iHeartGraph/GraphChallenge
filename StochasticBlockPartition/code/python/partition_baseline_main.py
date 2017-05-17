@@ -5,7 +5,7 @@ if use_timeit:
 import os, sys, argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-p", "--parts", type=int, required=False)
+parser.add_argument("-p", "--parts", type=int, required=False, default=0)
 parser.add_argument("-v", "--verbose", action="store_true", default=False)
 parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 args = parser.parse_args()
