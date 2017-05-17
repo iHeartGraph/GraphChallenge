@@ -463,10 +463,10 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
         M_r_row = M_r_row[t].toarray().ravel()
         M_r_col = M_r_col[t].toarray().ravel()
     else:
-        M_t_s = M[t, s].ravel()
-        M_s_t = M[s, t].ravel()
-        M_r_row = M_r_row[t].ravel()
-        M_r_col = M_r_col[t].ravel()
+        M_t_s = M[t, s]
+        M_s_t = M[s, t]
+        M_r_row = M_r_row[t]
+        M_r_col = M_r_col[t]
         
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
@@ -551,19 +551,19 @@ def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_
 
     # only keep non-zero entries to avoid unnecessary computation
     d_in_new_r_row = d_in_new[M_r_row.nonzero()]
-    d_in_new_s_row = d_in_new[M_s_row.ravel().nonzero()]
+    d_in_new_s_row = d_in_new[M_s_row.nonzero()]
     M_r_row = M_r_row[M_r_row.nonzero()]
     M_s_row = M_s_row[M_s_row.nonzero()]
-    d_out_new_r_col = d_out_new_[M_r_col.ravel().nonzero()]
-    d_out_new_s_col = d_out_new_[M_s_col.ravel().nonzero()]
+    d_out_new_r_col = d_out_new_[M_r_col.nonzero()]
+    d_out_new_s_col = d_out_new_[M_s_col.nonzero()]
     M_r_col = M_r_col[M_r_col.nonzero()]
     M_s_col = M_s_col[M_s_col.nonzero()]
-    d_in_r_t1 = d_in[M_r_t1.ravel().nonzero()]
-    d_in_s_t1 = d_in[M_s_t1.ravel().nonzero()]
+    d_in_r_t1 = d_in[M_r_t1.nonzero()]
+    d_in_s_t1 = d_in[M_s_t1.nonzero()]
     M_r_t1= M_r_t1[M_r_t1.nonzero()]
     M_s_t1 = M_s_t1[M_s_t1.nonzero()]
-    d_out_r_col = d_out_[M_t2_r.ravel().nonzero()]
-    d_out_s_col = d_out_[M_t2_s.ravel().nonzero()]
+    d_out_r_col = d_out_[M_t2_r.nonzero()]
+    d_out_s_col = d_out_[M_t2_s.nonzero()]
     M_t2_r = M_t2_r[M_t2_r.nonzero()]
     M_t2_s = M_t2_s[M_t2_s.nonzero()]
 
