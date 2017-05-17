@@ -75,29 +75,32 @@ while not optimal_num_blocks_found:
     best_merge_for_each_block = np.ones(num_blocks, dtype=int) * -1  # initialize to no merge
     delta_entropy_for_each_block = np.ones(num_blocks) * np.Inf  # initialize criterion
     block_partition = range(num_blocks)
-    for current_block in range(num_blocks):  # evalaute agglomerative updates for each block
-        for proposal_idx in range(num_agg_proposals_per_block):
-            # populate edges to neighboring blocks
-            if use_sparse_matrix:
-                out_blocks = interblock_edge_count[current_block, :].nonzero()[1]
-                out_blocks = np.hstack((out_blocks.reshape([len(out_blocks), 1]),
-                                        interblock_edge_count[current_block, out_blocks].toarray().transpose()))
-            else:
-                out_blocks = interblock_edge_count[current_block, :].nonzero()
-                out_blocks = np.hstack(
-                    (np.array(out_blocks).transpose(), interblock_edge_count[current_block, out_blocks].transpose()))
-            if use_sparse_matrix:
-                in_blocks = interblock_edge_count[:, current_block].nonzero()[0]
-                in_blocks = np.hstack(
-                    (in_blocks.reshape([len(in_blocks), 1]), interblock_edge_count[in_blocks, current_block].toarray()))
-            else:
-                in_blocks = interblock_edge_count[:, current_block].nonzero()
-                in_blocks = np.hstack(
-                    (np.array(in_blocks).transpose(), interblock_edge_count[in_blocks, current_block].transpose()))
+    for cc_block in range(0, num_blocks, 1):  # evalaute agglomerative updates for each block
+        current_block = cc_block
 
+        # populate edges to neighboring blocks
+        if use_sparse_matrix:
+            out_blocks = interblock_edge_count[current_block, :].nonzero()[1]
+            out_blocks = np.hstack((out_blocks.reshape([len(out_blocks), 1]),
+                                    interblock_edge_count[current_block, out_blocks].toarray().transpose()))
+        else:
+            out_blocks = interblock_edge_count[current_block, :].nonzero()
+            out_blocks = np.hstack(
+                (np.array(out_blocks).transpose(), interblock_edge_count[current_block, out_blocks].transpose()))
+        if use_sparse_matrix:
+            in_blocks = interblock_edge_count[:, current_block].nonzero()[0]
+            in_blocks = np.hstack(
+                (in_blocks.reshape([len(in_blocks), 1]), interblock_edge_count[in_blocks, current_block].toarray()))
+        else:
+            in_blocks = interblock_edge_count[:, current_block].nonzero()
+            in_blocks = np.hstack(
+                (np.array(in_blocks).transpose(), interblock_edge_count[in_blocks, current_block].transpose()))
+
+        for proposal_idx in range(num_agg_proposals_per_block):
             # propose a new block to merge with
             proposal, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
-                current_block, out_blocks, in_blocks, block_partition, interblock_edge_count, block_degrees, num_blocks,
+                current_block,
+                out_blocks, in_blocks, block_partition, interblock_edge_count, block_degrees, num_blocks,
                 1, use_sparse_matrix)
 
             # compute the two new rows and columns of the interblock edge count matrix
@@ -126,6 +129,7 @@ while not optimal_num_blocks_found:
                                                   new_interblock_edge_count_new_block_col, block_degrees_out,
                                                   block_degrees_in, block_degrees_out_new, block_degrees_in_new,
                                                   use_sparse_matrix)
+
             if delta_entropy < delta_entropy_for_each_block[current_block]:  # a better block candidate was found
                 best_merge_for_each_block[current_block] = proposal
                 delta_entropy_for_each_block[current_block] = delta_entropy
@@ -158,7 +162,8 @@ while not optimal_num_blocks_found:
             current_block = partition[current_node]
             # propose a new block for this node
             proposal, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
-                current_block, out_neighbors[current_node], in_neighbors[current_node], partition,
+                current_block,
+                out_neighbors[current_node], in_neighbors[current_node], partition,
                 interblock_edge_count, block_degrees, num_blocks, 0, use_sparse_matrix)
 
             # determine whether to accept or reject the proposal
