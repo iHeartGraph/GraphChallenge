@@ -246,6 +246,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
         if agg_move:
             # force proposal to be different from current block via a random offset and modulo
             s = (r + 1 + np.random.randint(B - 1)) % B
+            s = np.array([s]) # keep while r is scalar
         else:
             s = np.array([np.random.randint(B)])
     else:  # propose by random draw from neighbors of block partition[rand_neighbor]
@@ -257,6 +258,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
             multinomial_prob[r] = 0
             if multinomial_prob.sum() == 0:  # the current block has no neighbors. randomly propose a different block
                 s = (r + 1 + np.random.randint(B - 1)) % B
+                s = np.array([s]) # keep while r is scalar
                 return s, k_out, k_in, k
             else:
                 multinomial_prob = multinomial_prob / multinomial_prob.sum()
