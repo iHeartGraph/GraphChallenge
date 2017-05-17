@@ -316,37 +316,37 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             M_r_row = sparse.lil_matrix(M[r, :].shape, dtype=int)
             M_r_col = sparse.lil_matrix(M[:, r].shape, dtype=int)
         else:
-            M_r_row = np.zeros((1, B), dtype=int)
-            M_r_col = np.zeros((B, 1), dtype=int)
+            M_r_row = np.zeros(B, dtype=int)
+            M_r_col = np.zeros(B, dtype=int)
     else:
         if use_sparse:
             M_r_row = M[r, :].copy()
             M_r_col = M[:, r].copy()
         else:
-            M_r_row = M[r, :].copy().reshape(1, B)
-            M_r_col = M[:, r].copy().reshape(B, 1)
-        M_r_row[0, b_out] -= count_out
-        M_r_row[0, r] -= np.sum(count_in[np.where(b_in == r)])
-        M_r_row[0, s] += np.sum(count_in[np.where(b_in == r)])
-        M_r_col[b_in, 0] -= count_in.reshape(M_r_col[b_in, 0].shape)
-        M_r_col[r, 0] -= np.sum(count_out[np.where(b_out == r)])
-        M_r_col[s, 0] += np.sum(count_out[np.where(b_out == r)])
+            M_r_row = M[r, :].copy()
+            M_r_col = M[:, r].copy()
+        M_r_row[b_out] -= count_out
+        M_r_row[r] -= np.sum(count_in[np.where(b_in == r)])
+        M_r_row[s] += np.sum(count_in[np.where(b_in == r)])
+        M_r_col[b_in] -= count_in.reshape(M_r_col[b_in].shape)
+        M_r_col[r] -= np.sum(count_out[np.where(b_out == r)])
+        M_r_col[s] += np.sum(count_out[np.where(b_out == r)])
     if use_sparse:
         M_s_row = M[s, :].copy()
         M_s_col = M[:, s].copy()
     else:
-        M_s_row = M[s, :].copy().reshape(1, B)
-        M_s_col = M[:, s].copy().reshape(B, 1)
-    M_s_row[0, b_out] += count_out
-    M_s_row[0, r] -= np.sum(count_in[np.where(b_in == s)])
-    M_s_row[0, s] += np.sum(count_in[np.where(b_in == s)])
-    M_s_row[0, r] -= count_self
-    M_s_row[0, s] += count_self
-    M_s_col[b_in, 0] += count_in.reshape(M_s_col[b_in, 0].shape)
-    M_s_col[r, 0] -= np.sum(count_out[np.where(b_out == s)])
-    M_s_col[s, 0] += np.sum(count_out[np.where(b_out == s)])
-    M_s_col[r, 0] -= count_self
-    M_s_col[s, 0] += count_self
+        M_s_row = M[s, :].copy()
+        M_s_col = M[:, s].copy()
+    M_s_row[b_out] += count_out
+    M_s_row[r] -= np.sum(count_in[np.where(b_in == s)])
+    M_s_row[s] += np.sum(count_in[np.where(b_in == s)])
+    M_s_row[r] -= count_self
+    M_s_row[s] += count_self
+    M_s_col[b_in] += count_in.reshape(M_s_col[b_in].shape)
+    M_s_col[r] -= np.sum(count_out[np.where(b_out == s)])
+    M_s_col[s] += np.sum(count_out[np.where(b_out == s)])
+    M_s_col[r] -= count_self
+    M_s_col[s] += count_self
     return M_r_row, M_s_row, M_r_col, M_s_col
 
 
@@ -460,13 +460,13 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
     if use_sparse:
         M_t_s = M[t, s].toarray().ravel()
         M_s_t = M[s, t].toarray().ravel()
-        M_r_row = M_r_row[0, t].toarray().ravel()
-        M_r_col = M_r_col[t, 0].toarray().ravel()
+        M_r_row = M_r_row[t].toarray().ravel()
+        M_r_col = M_r_col[t].toarray().ravel()
     else:
         M_t_s = M[t, s].ravel()
         M_s_t = M[s, t].ravel()
-        M_r_row = M_r_row[0, t].ravel()
-        M_r_col = M_r_col[t, 0].ravel()
+        M_r_row = M_r_row[t].ravel()
+        M_r_col = M_r_col[t].ravel()
         
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
@@ -550,7 +550,7 @@ def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_
     d_out_ = d_out[idx]
 
     # only keep non-zero entries to avoid unnecessary computation
-    d_in_new_r_row = d_in_new[M_r_row.ravel().nonzero()]
+    d_in_new_r_row = d_in_new[M_r_row.nonzero()]
     d_in_new_s_row = d_in_new[M_s_row.ravel().nonzero()]
     M_r_row = M_r_row[M_r_row.nonzero()]
     M_s_row = M_s_row[M_s_row.nonzero()]
