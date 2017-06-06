@@ -10,6 +10,7 @@ import traceback
 import numpy.random
 
 parser = argparse.ArgumentParser()
+parser.add_argument("-P", "--parallel-phase", type=int, required=False, default=3)
 parser.add_argument("-t", "--threads", type=int, required=False, default=0)
 parser.add_argument("-p", "--parts", type=int, required=False, default=0)
 parser.add_argument("-v", "--verbose", action="store_true", default=False)
@@ -221,6 +222,9 @@ def do_main(args):
     global partition, out_neighbors, in_neighbors, interblock_edge_count, block_degrees, num_blocks, block_degrees_out, block_degrees_in
     global debug, beta, block_partition, n_proposal
 
+    parallel_phase1 = (args.parallel_phase & 1) != 0
+    parallel_phase2 = (args.parallel_phase & 2) != 0
+
     n_thread = args.threads
     input_filename = args.input_filename
     true_partition_available = True
@@ -298,7 +302,7 @@ def do_main(args):
         block_partition = np.arange(num_blocks)
         n_merges += 1
 
-        if n_thread > 0:
+        if parallel_phase1 and n_thread > 0:
             L = range(num_blocks)
             pool_size = min(n_thread, num_blocks)
 
@@ -344,7 +348,7 @@ def do_main(args):
             num_nodal_moves = 0;
             itr_delta_entropy[itr] = 0
 
-            if n_thread > 0:
+            if parallel_phase2 and n_thread > 0:
                     L = range(N)
                     pool_size = min(n_thread, N)
                     movements = [None] * N
@@ -355,17 +359,12 @@ def do_main(args):
             else:
                 # xxx using random_permutation(range(N)) is more than 2x faster than using range(N), but does not converge without sorting!
                 L = range(N)
-                L = random_permutation(L)
                 movements = [propose_node_movement(i, partition, out_neighbors, in_neighbors, interblock_edge_count, block_degrees, num_blocks, block_degrees_out, block_degrees_in, debug, beta) for i in L]
-                #movements = sorted(movements)
 
             (current_node_all,current_block_all,proposal_all,delta_entropy_all,p_accept_all,
              new_interblock_edge_count_current_block_row_all, new_interblock_edge_count_new_block_row_all, new_interblock_edge_count_current_block_col_all, new_interblock_edge_count_new_block_col_all,
              block_degrees_out_new_all, block_degrees_in_new_all, block_degrees_new_all) = tuple(zip(*movements))
 
-            #print("current_node_all = %s" % str(current_node_all))
-            #print("p_accept_all = %s" % str(p_accept_all))
-            
             accept = (np.random.uniform(size=N) <= p_accept_all)
             total_num_nodal_moves_itr += np.sum(accept)
             num_nodal_moves += np.sum(accept)
