@@ -344,62 +344,64 @@ def do_main(args):
         overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N,
                                                   E, use_sparse = 0)
 
+        batch_size = max(1, n_thread)
+        batch_size = 64
+
         for itr in range(max_num_nodal_itr):
             num_nodal_moves = 0;
             itr_delta_entropy[itr] = 0
 
-            if parallel_phase2 and n_thread > 0:
-                    L = range(N)
-                    pool_size = min(n_thread, N)
-                    movements = [None] * N
+            for j in range(0, N, batch_size):
+                L = range(j, min(j + batch_size, N))
+
+                if parallel_phase2 and n_thread > 0:
+                    pool_size = min(n_thread, len(L))
                     with Pool(processes=pool_size) as pool:
-                        for movement in pool.imap_unordered(propose_node_movement_wrapper, L):
-                            current_node = movement[0]
-                            movements[current_node] = movement
-            else:
-                # xxx using random_permutation(range(N)) is more than 2x faster than using range(N), but does not converge without sorting!
-                L = range(N)
-                movements = [propose_node_movement(i, partition, out_neighbors, in_neighbors, interblock_edge_count, block_degrees, num_blocks, block_degrees_out, block_degrees_in, debug, beta) for i in L]
+                        movements = pool.map(propose_node_movement_wrapper, L)
+                else:
+                    # xxx using random_permutation(range(N)) is more than 2x faster than using range(N), but does not converge without sorting!
+                    movements = [propose_node_movement(i, partition, out_neighbors, in_neighbors, interblock_edge_count, block_degrees, num_blocks, block_degrees_out, block_degrees_in, debug, beta) for i in L]
 
-            (current_node_all,current_block_all,proposal_all,delta_entropy_all,p_accept_all,
-             new_interblock_edge_count_current_block_row_all, new_interblock_edge_count_new_block_row_all, new_interblock_edge_count_current_block_col_all, new_interblock_edge_count_new_block_col_all,
-             block_degrees_out_new_all, block_degrees_in_new_all, block_degrees_new_all) = tuple(zip(*movements))
+                (current_node_all,current_block_all,proposal_all,delta_entropy_all,p_accept_all,
+                 new_interblock_edge_count_current_block_row_all, new_interblock_edge_count_new_block_row_all, new_interblock_edge_count_current_block_col_all, new_interblock_edge_count_new_block_col_all,
+                 block_degrees_out_new_all, block_degrees_in_new_all, block_degrees_new_all) = tuple(zip(*movements))
 
-            accept = (np.random.uniform(size=N) <= p_accept_all)
-            total_num_nodal_moves_itr += np.sum(accept)
-            num_nodal_moves += np.sum(accept)
+                accept = (np.random.uniform(size=len(L)) <= p_accept_all)
+                total_num_nodal_moves_itr += np.sum(accept)
+                num_nodal_moves += np.sum(accept)
 
-            current_node_all = np.array(current_node_all)
+                current_node_all = np.array(current_node_all)
 
-            for i in current_node_all[accept]:
-                itr_delta_entropy[itr] += delta_entropy_all[i]
-                ni = np.array([i])
-                proposal = np.array([proposal_all[i]])
-                current_block = np.array([partition[i]])
+                for idx,e in enumerate(current_node_all):
+                    if accept[idx]:
+                        itr_delta_entropy[itr] += delta_entropy_all[idx]
+                        ni = np.array([e])
+                        proposal = np.array([proposal_all[idx]])
+                        current_block = np.array([partition[e]])
 
-                if 0:
-                    print("Propose to move %s from block %s to block %s with probability %s" % (i, current_block, proposal, p_accept_all[i]))
+                        if 0:
+                            print("Propose to move %s from block %s to block %s with probability %s" % (e, current_block, proposal, p_accept_all[idx]))
 
-                mask = np.array([True])
-                M = interblock_edge_count
+                        mask = np.array([True])
+                        M = interblock_edge_count
 
-                blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[i][:, 0]], return_inverse=True)
-                count_out = np.bincount(inverse_idx_out, weights=out_neighbors[i][:, 1]).astype(int)
-                blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[i][:, 0]], return_inverse=True)
-                count_in = np.bincount(inverse_idx_in, weights=in_neighbors[i][:, 1]).astype(int)
-                self_edge_weight = np.sum(out_neighbors[i][np.where(out_neighbors[i][:, 0] == i), 1])
-                (new_interblock_edge_count_current_block_row, new_interblock_edge_count_new_block_row,
-                 new_interblock_edge_count_current_block_col, new_interblock_edge_count_new_block_col) = \
-                                                                                                         compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
-                                                                                                                                                            blocks_out, count_out, blocks_in, count_in,
-                                                                                                                                                            self_edge_weight, 0, use_sparse = 0)
+                        blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[e][:, 0]], return_inverse=True)
+                        count_out = np.bincount(inverse_idx_out, weights=out_neighbors[e][:, 1]).astype(int)
+                        blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[e][:, 0]], return_inverse=True)
+                        count_in = np.bincount(inverse_idx_in, weights=in_neighbors[e][:, 1]).astype(int)
+                        self_edge_weight = np.sum(out_neighbors[e][np.where(out_neighbors[e][:, 0] == e), 1])
+                        (new_interblock_edge_count_current_block_row, new_interblock_edge_count_new_block_row,
+                         new_interblock_edge_count_current_block_col, new_interblock_edge_count_new_block_col) = \
+                                                                                                                 compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
+                                                                                                                                                                    blocks_out, count_out, blocks_in, count_in,
+                                                                                                                                                                    self_edge_weight, 0, use_sparse = 0)
 
-                partition,interblock_edge_count,block_degrees_out, block_degrees_in, block_degrees \
-                    = update_partition_batch(partition, ni, proposal, mask, M,
-                                             [new_interblock_edge_count_current_block_row],
-                                             [new_interblock_edge_count_new_block_row],
-                                             [new_interblock_edge_count_current_block_col],
-                                             [new_interblock_edge_count_new_block_col])
+                        partition,interblock_edge_count,block_degrees_out, block_degrees_in, block_degrees \
+                            = update_partition_batch(partition, ni, proposal, mask, M,
+                                                     [new_interblock_edge_count_current_block_row],
+                                                     [new_interblock_edge_count_new_block_row],
+                                                     [new_interblock_edge_count_current_block_col],
+                                                     [new_interblock_edge_count_new_block_col])
 
             if verbose:
                 # print("Partition = \n%s" % hash(str(partition)))
