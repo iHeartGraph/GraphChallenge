@@ -13,6 +13,10 @@ from scipy import sparse as sparse
 import scipy.misc as misc
 from munkres import Munkres # for correctness evaluation
 import sys
+from multiprocessing import sharedctypes
+import ctypes
+from compute_delta_entropy import log_nonzero, compute_delta_entropy
+
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
     import graph_tool.all as gt
@@ -177,7 +181,11 @@ def initialize_edge_counts(out_neighbors, B, b, use_sparse):
     if use_sparse: # store interblock edge counts as a sparse matrix
         M = sparse.lil_matrix((B, B), dtype=int)
     else:
-        M = np.zeros((B, B), dtype=int)
+        M = np.zeros((B,B), dtype=int)
+        #raw = sharedctypes.RawArray(ctypes.c_int64, int(B)*int(B))
+        #M = np.frombuffer(raw, dtype=np.int64).reshape((B,B))
+        #M[:,:] = 0
+
     # compute the initial interblock edge count
     for v in range(len(out_neighbors)):
         if len(out_neighbors[v]) > 0:
@@ -323,11 +331,11 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         s : int
                     proposed block assignment for the node under consideration
         b_out : ndarray (int)
-                    blocks of the out neighbors
+                    blocks of the out neighbors (of a vertex)
         count_out : ndarray (int)
                     edge counts to the out neighbor blocks
         b_in : ndarray (int)
-                    blocks of the in neighbors
+                    blocks of the in neighbors (of a vertex)
         count_in : ndarray (int)
                     edge counts to the in neighbor blocks
         count_self : int
@@ -357,22 +365,11 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
-        if use_sparse:
-            M_r_row = sparse.lil_matrix(M[r, :].shape, dtype=int)
-            M_r_col = sparse.lil_matrix(M[:, r].shape, dtype=int)
-        else:
-            M_r_row = np.zeros((1, B), dtype=int)
-            M_r_col = np.zeros((B, 1), dtype=int)
+        M_r_row = np.zeros((1, B), dtype=int)
+        M_r_col = np.zeros((B, 1), dtype=int)
     else:
-        if use_sparse:
-            M_r_row = M[r, :].copy()
-            M_r_col = M[:, r].copy()
-        else:
-            M_r_row = M[r, :].copy().reshape(1, B)
-            M_r_col = M[:, r].copy().reshape(B, 1)
-
-        #print('1 M_r_row.shape', M_r_row.shape)
-        #print('1 M_r_col.shape', M_r_col.shape)
+        M_r_row = M[r, :].copy().reshape(1, B)
+        M_r_col = M[:, r].copy().reshape(B, 1)
 
         M_r_row[0, b_out] -= count_out
         M_r_row[0, r] -= np.sum(count_in[np.where(b_in == r)])
@@ -381,37 +378,17 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_r_col[b_in, 0] -= count_in.reshape(M_r_col[b_in, 0].shape)
         M_r_col[r, 0] -= np.sum(count_out[np.where(b_out == r)])
         M_r_col[s, 0] += np.sum(count_out[np.where(b_out == r)])
-        #print('0', M_r_row)
 
-    if use_sparse:
-        M_s_row = M[s, :].copy()
-        M_s_col = M[:, s].copy()
-    else:
-        M_s_row = M[s, :].copy()
-        M_s_col = M[:, s].copy()
-
-    #print("shapes:", s, M_s_row.shape, M_s_col.shape, b_in.shape, count_in.shape)
-    if 0:
-        print('')
-        print('compute_new_rows_cols_interblock_edge_count_matrix')
-        print('s = %s' % s)
-
+    M_s_row = M[s, :].copy()
+    M_s_col = M[:, s].copy()
 
     M_s_row[:, b_out] += count_out
 
     for i in range(len(s)):
-        ss = s[i]
-        M_s_row[i, r]  -= np.sum(count_in[np.where(b_in == ss)])
-        M_s_row[i, ss] += np.sum(count_in[np.where(b_in == ss)])
-
-    #M_s_row[:, r] -= np.sum(count_in[np.where(b_in == s)])
-    #M_s_row[:, s] += np.sum(count_in[np.where(b_in == s)])
+        M_s_row[i, r]  -= np.sum(count_in[np.where(b_in == s[i])])
+        M_s_row[i, s[i]] += np.sum(count_in[np.where(b_in == s[i])])
 
     M_s_row[:, r] -= count_self
-
-    #M_s_row[:, s] += count_self
-
-    # xxx
     for i in range(len(s)):
         M_s_row[i, s[i]] += count_self
 
@@ -423,29 +400,13 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_s_col[b_in, :] += count_in.reshape(M_s_col[b_in, :].shape)
 
     for i in range(len(s)):
-        ss = s[i]
-        M_s_col[r, i]  -= np.sum(count_out[np.where(b_out == ss)])
-        M_s_col[ss, i] += np.sum(count_out[np.where(b_out == ss)])
-
-    #M_s_col[r, :] -= np.sum(count_out[np.where(b_out == s)])
-    #M_s_col[s, :] += np.sum(count_out[np.where(b_out == s)])
+        M_s_col[r, i]  -= np.sum(count_out[np.where(b_out == s[i])])
+        M_s_col[s[i], i] += np.sum(count_out[np.where(b_out == s[i])])
 
     M_s_col[r, :] -= count_self
 
-    # xxx
-    # M_s_col[s, :] += count_self
     for i in range(len(s)):
         M_s_col[s[i], i] += count_self
-
-    if 0:
-        print('hash(M)', hash(str(M)))
-        print('hash(b_out)', hash(str(b_out)))
-        print('hash(b_in)', hash(str(b_in)))
-        print('hash(count_in)', hash(str(count_in)))
-        print('hash(count_out)', hash(str(count_out)))
-        print('hash(count_self)', hash(str(count_self)))
-        print('hash(M_s_row[0,:])', hash(str(M_s_row[0,:].ravel())))
-        print('')
 
     return M_r_row, M_s_row, M_r_col, M_s_col
 
@@ -595,16 +556,6 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
     return p_backward / p_forward
-
-
-def log_nonzero(x):
-    if not (x > 0).all():
-        raise Exception("Bad value found.")
-
-    ym = (x != 0)
-    y = x.astype(float)
-    y[ym] = np.log(y[ym])
-    return y
 
 
 def compute_de(r, s, M, d_out, d_in, d, agg_move, b_out=None, count_out=None, b_in=None, count_in=None, count_self=None, k_in=None, k_out=None, debug=0):
@@ -901,185 +852,7 @@ def compute_de(r, s, M, d_out, d_in, d, agg_move, b_out=None, count_out=None, b_
 
     return ([e0, e1, e2, e3, e4, e5, e6, e7])
 
-
-def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new, use_sparse, debug):
-    """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the current block.
-
-        Parameters
-        ----------
-        r : int
-                    current block assignment for the node under consideration
-        s : int
-                    proposed block assignment for the node under consideration
-        M : ndarray or sparse matrix (int), shape = (#blocks, #blocks)
-                    edge count matrix between all the blocks.
-        M_r_row : ndarray or sparse matrix (int)
-                    the current block row of the new edge count matrix under proposal
-        M_s_row : ndarray or sparse matrix (int)
-                    the proposed block row of the new edge count matrix under proposal
-        M_r_col : ndarray or sparse matrix (int)
-                    the current block col of the new edge count matrix under proposal
-        M_s_col : ndarray or sparse matrix (int)
-                    the proposed block col of the new edge count matrix under proposal
-        d_out : ndarray (int)
-                    the current out degree of each block
-        d_in : ndarray (int)
-                    the current in degree of each block
-        d_out_new : ndarray (int)
-                    the new out degree of each block under proposal
-        d_in_new : ndarray (int)
-                    the new in degree of each block under proposal
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
-
-        Returns
-        -------
-        delta_entropy : float
-                    entropy under the proposal minus the current entropy
-
-        Notes
-        -----
-        - M^-: current edge count matrix between the blocks
-        - M^+: new edge count matrix under the proposal
-        - d^-_{t, in}: current in degree of block t
-        - d^-_{t, out}: current out degree of block t
-        - d^+_{t, in}: new in degree of block t under the proposal
-        - d^+_{t, out}: new out degree of block t under the proposal
-        
-        The difference in entropy is computed as:
-        
-        \dot{S} = \sum_{t_1, t_2} {\left[ -M_{t_1 t_2}^+ \text{ln}\left(\frac{M_{t_1 t_2}^+}{d_{t_1, out}^+ d_{t_2, in}^+}\right) + M_{t_1 t_2}^- \text{ln}\left(\frac{M_{t_1 t_2}^-}{d_{t_1, out}^- d_{t_2, in}^-}\right)\right]}
-        
-        where the sum runs over all entries $(t_1, t_2)$ in rows and cols $r$ and $s$ of the edge count matrix"""
-
-    #print("M_{s,r}_{col,row}.shape", M_s_col.shape, M_s_row.shape, M_r_col.shape, M_r_row.shape)
-    #print(d_out.shape, d_in.shape, d_out_new.shape, d_in_new.shape)
-
-    if use_sparse: # computation in the sparse matrix is slow so convert to numpy arrays since operations are on only two rows and cols
-        M_r_row = M_r_row.toarray()
-        M_s_row = M_s_row.toarray()
-        M_r_col = M_r_col.toarray()
-        M_s_col = M_s_col.toarray()
-        M_r_t1 = M[r, :].toarray()
-        M_s_t1 = M[s, :].toarray()
-        M_t2_r = M[:, r].toarray()
-        M_t2_s = M[:, s].toarray()
-    else:
-        M_r_t1 = M[r, :]
-        M_s_t1 = M[s, :]
-        M_t2_r = M[:, r]
-        M_t2_s = M[:, s]
-
-    # remove r and s from the cols to avoid double counting
-    # Double counting correction needed on d2 d3 d6 d7
-    # idx = np.arange(M.shape[0])
-    # idx = idx[~np.in1d(idx, r) & ~np.in1d(idx, s)]
-
-    idx = np.ones((M.shape[0],), dtype=bool)
-    idx[r] = 0
-    idx[s] = 0
-
-    M_r_col = M_r_col[idx]
-    M_s_col = M_s_col[idx]
-    M_t2_r = M_t2_r[idx]
-    M_t2_s = M_t2_s[idx]
-    d_out_new_ = d_out_new[idx]
-    d_out_ = d_out[idx]
-
-    # only keep non-zero entries to avoid unnecessary computation
-    d_in_new_r_row = d_in_new[M_r_row.ravel() != 0]
-    d_in_new_s_row = d_in_new[M_s_row.ravel() != 0]
-
-    if 0:
-        print('Original compute_delta_entropy')
-        print('hash(d_in_new)', hash(str(d_in_new.ravel())))
-        print('hash(M_s_row[0,:])', hash(str(M_s_row.ravel())))
-        #print('M_s_row[0,:] = \n%s' % M_s_row.reshape((10,-1)))
-        #print('where(M_s_row[0,:]) = \n%s' % np.where(M_s_row.ravel() != 0))
-
-    if 0:
-        print('d_in_new.shape', d_in_new.shape)
-        print('Original compute_delta_entropy')
-        print('hash(M_s_row)', hash(str(M_s_row)))
-        print('M_s_row', M_s_row)
-        print('hash(M_r_row)', hash(str(M_r_row)))
-        print('hash(sum(M_s_row))', hash(str(np.sum(M_s_row, axis=1))))
-        print('hash(d_in)', hash(str(d_in)))
-        print('hash(d_out)', hash(str(d_out)))
-        print('hash(d_in_new)', hash(str(d_in_new_r_row.ravel())))
-        print('hash(d_out_new[r])', hash(str(d_out_new[r])))
-        print('d_in_new = \n %s' % d_in_new)
-
-    M_r_row = M_r_row[M_r_row != 0]
-    M_s_row = M_s_row[M_s_row != 0]
-    d_out_new_r_col = d_out_new_[M_r_col.ravel() != 0]
-    d_out_new_s_col = d_out_new_[M_s_col.ravel() != 0]
-    M_r_col = M_r_col[M_r_col != 0]
-    M_s_col = M_s_col[M_s_col != 0]
-    d_in_r_t1 = d_in[M_r_t1.ravel() != 0]
-    d_in_s_t1 = d_in[M_s_t1.ravel() != 0]
-    M_r_t1= M_r_t1[M_r_t1 != 0]
-    M_s_t1 = M_s_t1[M_s_t1 != 0]
-    d_out_r_col = d_out_[M_t2_r.ravel() != 0]
-    d_out_s_col = d_out_[M_t2_s.ravel() != 0]
-    M_t2_r = M_t2_r[M_t2_r != 0]
-    M_t2_s = M_t2_s[M_t2_s != 0]
-
-    # sum over the two changed rows and cols
-    delta_entropy = 0.0
-
-    if 0:
-        print('')
-        print('2 d_out_new.shape', d_out_new.shape)
-        print('2 d_out_new[s]',d_out_new[s])
-        print("2 sum(M_s_row)=", np.sum(M_s_row))
-        print('2 w', np.where(M_s_row.ravel() != 0))
-        print('2 d_in_new_s_row', d_in_new_s_row)
-        print("2 (M_s_row)=", (M_s_row))
-
-    if 1:
-        # not faster
-        d0 = -np.sum(M_r_row * (log_nonzero(M_r_row) - log_nonzero(d_in_new_r_row * d_out_new[r])))
-        d1 = -np.sum(M_s_row * (log_nonzero(M_s_row) - log_nonzero(d_in_new_s_row * d_out_new[s])))
-        d2 = -np.sum(M_r_col * (log_nonzero(M_r_col) - log_nonzero(d_out_new_r_col * d_in_new[r])))
-        d3 = -np.sum(M_s_col * (log_nonzero(M_s_col) - log_nonzero(d_out_new_s_col * d_in_new[s])))
-        d4 = np.sum(M_r_t1  * (log_nonzero(M_r_t1)  - log_nonzero(d_in_r_t1 * d_out[r])))
-        d5 = np.sum(M_s_t1  * (log_nonzero(M_s_t1)  - log_nonzero(d_in_s_t1 * d_out[s])))
-#        print(d_out_s_col)
-#        print('prod', d_out_s_col * d_in[s])
-#        print('M_t2_s', M_t2_s)
-        #print('M_t2_r', np.sum(M_t2_r))
-        d6 = np.sum(M_t2_r  * (log_nonzero(M_t2_r)  - log_nonzero(d_out_r_col * d_in[r])))
-        if debug:
-            print('d6: s = %s' % s)
-            print('d6: hash(d_out_r_col) = %s' % hash(str(d_out_r_col.ravel())))
-            print('d6: M_t2_r[s] = %s' % M[:, r][s].ravel())
-            print('d6: M_t2_r.shape = %s' % M_t2_r.shape)
-            print('d6: M_t2_r = %s' % M_t2_r.ravel())
-            print('d6: d_out_r_col.shape = %s' % d_out_r_col.shape)
-            print('d6: d_out_r_col = %s' % d_out_r_col)
-            print('d6: remove element %s ' % M[:, r].ravel()[s])
-            e6_corr = - (M[:, r].ravel()[s] * (log_nonzero(M[:, r].ravel()[s]) - log_nonzero(d_out[s] * d_in[r])))
-            print('d6: e6_corr = %s' % e6_corr)
-            print('d6: d6 = %s' % d6)
-
-        d7 = np.sum(M_t2_s  * (log_nonzero(M_t2_s)  - log_nonzero(d_out_s_col * d_in[s])))
-        de = np.array([d0, d1, d2, d3, d4, d5, d6, d7]).ravel()
-        return de
-    else:
-        delta_entropy -= np.sum(M_r_row * np.log(M_r_row.astype(float) / (d_in_new_r_row * d_out_new[r])))
-        delta_entropy -= np.sum(M_s_row * np.log(M_s_row.astype(float) / (d_in_new_s_row * d_out_new[s])))
-        delta_entropy -= np.sum(M_r_col * np.log(M_r_col.astype(float) / (d_out_new_r_col * d_in_new[r])))
-        delta_entropy -= np.sum(M_s_col * np.log(M_s_col.astype(float) / (d_out_new_s_col * d_in_new[s])))
-        delta_entropy += np.sum(M_r_t1 * np.log(M_r_t1.astype(float) / (d_in_r_t1 * d_out[r])))
-        delta_entropy += np.sum(M_s_t1 * np.log(M_s_t1.astype(float) / (d_in_s_t1 * d_out[s])))
-        delta_entropy += np.sum(M_t2_r * np.log(M_t2_r.astype(float) / (d_out_r_col * d_in[r])))
-        delta_entropy += np.sum(M_t2_s * np.log(M_t2_s.astype(float) / (d_out_s_col * d_in[s])))
-
-    return delta_entropy
-
-
-def carry_out_best_merges(delta_entropy_for_each_block, best_merge_for_each_block, b, B, B_to_merge):
+def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_for_each_block, b, B, B_to_merge):
     """Execute the best merge (agglomerative) moves to reduce a set number of blocks
 
         Parameters
@@ -1102,13 +875,12 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merge_for_each_bloc
         B : int
                     total number of blocks after the merge"""
 
-    bestMerges = delta_entropy_for_each_block.argsort()
     block_map = np.arange(B)
     num_merge = 0
     counter = 0
     while num_merge < B_to_merge:
-        mergeFrom = bestMerges[counter]
-        mergeTo = block_map[best_merge_for_each_block[bestMerges[counter]]]
+        mergeFrom = best_merges[counter]
+        mergeTo = block_map[best_merge_for_each_block[best_merges[counter]]]
         counter += 1
         if mergeTo != mergeFrom:
             block_map[np.where(block_map == mergeFrom)] = mergeTo
