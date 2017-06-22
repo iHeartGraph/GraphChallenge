@@ -1,6 +1,7 @@
 from partition_baseline_support import *
 import multiprocessing as mp
-from multiprocessing import Pool, current_process
+from multiprocessing import Pool, Value, current_process
+from functools import reduce
 
 use_timeit = True # for timing runs (optional)
 if use_timeit:
@@ -16,6 +17,7 @@ parser.add_argument("-t", "--threads", type=int, required=False, default=0)
 parser.add_argument("-p", "--parts", type=int, required=False, default=0)
 parser.add_argument("-v", "--verbose", action="store_true", default=False)
 parser.add_argument("-b", "--node-move-batch-size", type=int, required=False, default=1)
+parser.add_argument("-s", "--sort", type=int, required=False, default=0)
 parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 args = parser.parse_args()
 
@@ -25,6 +27,36 @@ def random_permutation(iterable, r=None):
     pool = tuple(iterable)
     r = len(pool) if r is None else r
     return tuple(random.sample(pool, r))
+
+
+def entropy_max_argsort(x):
+    a = np.argsort(x)
+    y = x[a]
+    m = np.zeros(y.shape, dtype=bool)
+
+    # Positions of transition starts
+    m[0]  = 1
+    m[1:] = y[1:] != y[0:-1]
+    starts = np.where(m)[0]
+
+    # Positions of transition ends
+    ends = np.empty(starts.shape, dtype=int)
+    ends[0:-1] = starts[1:]
+    ends[-1] = y.shape[0]
+
+    # Run the counters
+    ii = starts.copy()
+    out = np.empty(x.shape, dtype=int)
+    k = 0
+
+    while k < x.shape[0]:
+        for idx,elm in enumerate(starts):
+            if ii[idx] < ends[idx]:
+                out[k] = a[ii[idx]]
+                ii[idx] += 1
+                k += 1
+    return out
+
 
 def compute_best_merge_and_entropy_wrapper(tup):
     (blocks, num_blocks) = tup
@@ -38,7 +70,7 @@ def compute_best_merge_and_entropy_wrapper(tup):
 
     return compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in)
 
-def compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, n_proposal, block_degrees_out, block_degrees_in):
+def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block_degrees, n_proposal, block_degrees_out, block_degrees_in):
     best_overall_merge = [-1 for i in blocks]
     best_overall_delta_entropy = [np.Inf for i in blocks]
     n_proposals_evaluated = 0
@@ -48,26 +80,26 @@ def compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, bl
             break
 
         current_block = np.array([current_block])
-        ii = interblock_edge_count[:, current_block].nonzero()
-        oo = interblock_edge_count[current_block, :].nonzero()
-        in_blocks = np.vstack((ii[0], interblock_edge_count[ii[0], current_block])).T
-        out_blocks = np.vstack((oo[1], interblock_edge_count[current_block, oo[1]])).T
+        ii = M[:, current_block].nonzero()
+        oo = M[current_block, :].nonzero()
+        in_blocks = np.vstack((ii[0], M[ii[0], current_block])).T
+        out_blocks = np.vstack((oo[1], M[current_block, oo[1]])).T
 
         for proposal_idx in range(10):
 
             # propose a new block to merge with
             proposal, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
                 current_block,
-                out_blocks, in_blocks, block_partition, interblock_edge_count, block_degrees, num_blocks,
+                out_blocks, in_blocks, block_partition, M, block_degrees, num_blocks,
                 1, use_sparse = 0,
                 n_proposals = n_proposal)
 
             # compute the two new rows and columns of the interblock edge count matrix
-            new_interblock_edge_count_current_block_row, new_interblock_edge_count_new_block_row, new_interblock_edge_count_current_block_col, new_interblock_edge_count_new_block_col = \
-                                                                                                                                                                                         compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
+            new_M_current_block_row, new_M_new_block_row, new_M_current_block_col, new_M_new_block_col = \
+                                                                                                                                                                                         compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                                                                                                                                                                                             out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0],
                                                                                                                                                                                                                                             in_blocks[:, 1],
-                                                                                                                                                                                                                                            interblock_edge_count[current_block, current_block],
+                                                                                                                                                                                                                                            M[current_block, current_block],
                                                                                                                                                                                                                                             agg_move = 1, use_sparse = 0, debug = args.debug)
             n_proposals_evaluated += len(proposal)
             # compute change in entropy / posterior
@@ -77,12 +109,13 @@ def compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, bl
                 s = np.array([pp])
 
                 # compute the two new rows and columns of the interblock edge count matrix
-                new_interblock_edge_count_current_block_row_2, new_interblock_edge_count_new_block_row_2, new_interblock_edge_count_current_block_col_2, new_interblock_edge_count_new_block_col_2 = \
-                                                                                                                                                                                                     compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, s,
-                                                                                                                                                                                                                                                        out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0],
-                                                                                                                                                                                                                                                        in_blocks[:, 1],
-                                                                                                                                                                                                                                                        interblock_edge_count[current_block, current_block],
-                                                                                                                                                                                                                                                        agg_move = 1, use_sparse = 0, debug=args.debug)
+                new_M_current_block_row_2, new_M_new_block_row_2, new_M_current_block_col_2, new_M_new_block_col_2 = \
+                            compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, s,
+                                                                               out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0],
+                                                                               in_blocks[:, 1],
+                                                                               M[current_block, current_block],
+                                                                               agg_move = 1, use_sparse = 0, debug=args.debug)
+
                 # compute new block degrees
                 block_degrees_out_new_2, block_degrees_in_new_2, block_degrees_new_2 = compute_new_block_degrees(current_block,
                                                                                                                  s,
@@ -92,11 +125,11 @@ def compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, bl
                                                                                                                  num_out_neighbor_edges,
                                                                                                                  num_in_neighbor_edges,
                                                                                                                  num_neighbor_edges)
-                delta_entropy[pi] = compute_delta_entropy(current_block, s, interblock_edge_count,
-                                                          new_interblock_edge_count_current_block_row_2,
-                                                          new_interblock_edge_count_new_block_row_2,
-                                                          new_interblock_edge_count_current_block_col_2,
-                                                          new_interblock_edge_count_new_block_col_2,
+                delta_entropy[pi] = compute_delta_entropy(current_block, s, M,
+                                                          new_M_current_block_row_2,
+                                                          new_M_new_block_row_2,
+                                                          new_M_current_block_col_2,
+                                                          new_M_new_block_col_2,
                                                           block_degrees_out,
                                                           block_degrees_in,
                                                           block_degrees_out_new_2,
@@ -111,24 +144,61 @@ def compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, bl
 
     return blocks, best_overall_merge, best_overall_delta_entropy, n_proposals_evaluated
 
-
+update_id = -1
 def propose_node_movement_wrapper(tup):
+    global update_id, partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in
+
     current_node = tup
 
-    interblock_edge_count = syms['interblock_edge_count']
-    block_partition = syms['block_partition']
-    block_degrees = syms['block_degrees']
-    block_degrees_out = syms['block_degrees_out']
-    block_degrees_in = syms['block_degrees_in']
-    partition = syms['partition']
-    num_blocks = syms['num_blocks']
+    state = syms['state']
+    lock = syms['lock']
 
-    if 1:
-        pid = current_process().pid
-        numpy.random.seed((pid + int(time.time() * 1e6)) % 4294967295)
+    pid = current_process().pid
 
-    return propose_node_movement(current_node, partition, out_neighbors, in_neighbors,
-                                 interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in)
+    (update_id_shared, partition_shared, interblock_edge_count_shared, num_blocks, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, where_modified_shared) = state
+
+    is_non_seq = 0
+
+    lock.acquire()
+
+    if update_id != update_id_shared - 1:
+        is_non_seq = 1
+
+    if update_id != update_id_shared:
+        if update_id == -1:
+            (interblock_edge_count, partition, block_degrees, block_degrees_out, block_degrees_in) \
+                = (i.copy() for i in (interblock_edge_count_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+        elif is_non_seq:
+            interblock_edge_count[:] = interblock_edge_count_shared[:]
+            block_degrees_in[:] = block_degrees_in_shared[:]
+            block_degrees_out[:] = block_degrees_out_shared[:]
+            block_degrees[:] = block_degrees_shared[:]
+            partition[:] = partition_shared[:]            
+        else:
+            w = np.where(where_modified_shared)
+            interblock_edge_count[w, :] = interblock_edge_count_shared[w, :]
+            interblock_edge_count[:, w] = interblock_edge_count_shared[:, w]
+            block_degrees_in[w] = block_degrees_in_shared[w]
+            block_degrees_out[w] = block_degrees_out_shared[w]
+            block_degrees[w] = block_degrees_shared[w]
+            partition[:] = partition_shared[:]
+
+        update_id = update_id_shared.copy()
+
+    lock.release()
+
+    # Ensure every worker has a different random seed.
+    numpy.random.seed((pid + int(time.time() * 1e6)) % 4294967295)
+
+    t0 = time.time()
+
+    res = propose_node_movement(current_node, partition, out_neighbors, in_neighbors,
+                                interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in)
+
+    t1 = time.time()
+    t_elapsed_ms = (t1 - t0) * 1e3
+
+    return res + (t_elapsed_ms, not is_non_seq,is_non_seq)
 
 def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in):
     #child_id = current_process().pid
@@ -250,19 +320,342 @@ def update_partition_batch(b, ni, S, mask, M, M_r_rows, M_s_rows, M_r_cols, M_s_
     d = d_out + d_in
     return b, M, d_out, d_in, d
 
+def shared_memory_copy(z):
+    prod = reduce((lambda x,y : x*y), (i for i in z.shape))
+    ctype = {"float64" : ctypes.c_double, "int64" : ctypes.c_int64, "bool" : ctypes.c_bool}[str(z.dtype)]
+    raw = sharedctypes.RawArray(ctype, prod)
+    a = np.frombuffer(raw, dtype=z.dtype).reshape(z.shape)
+    a[:] = z
+    return a
+
+
+def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy_cur, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks):
+    global block_sum_time_cum
+
+    total_num_nodal_moves_itr = 0
+    itr_delta_entropy = np.zeros(max_num_nodal_itr)
+
+    for itr in range(max_num_nodal_itr):
+        num_nodal_moves = 0
+        block_sum_time = 0.0
+        itr_delta_entropy[itr] = 0
+
+        propose_time_ms_cum = 0
+        propose_time_workers_ms_cum = 0.0
+        merge_time_ms_cum = 0
+        update_partition_time_ms_cum = 0.0
+
+        if args.sort:
+            #L = np.argsort(partition)
+            L = entropy_max_argsort(partition)
+        else:
+            L = range(0, N)
+            
+        t_propose_start = time.time()
+
+        movements = (propose_node_movement(i, partition, out_neighbors, in_neighbors, M, num_blocks, block_degrees, block_degrees_out, block_degrees_in) for i in L)
+
+        t_propose_end = time.time()
+        propose_time_ms = (t_propose_end - t_propose_start) * 1e3
+        propose_time_ms_cum += propose_time_ms
+
+        t_merge_start = time.time()
+
+        proposal_cnt = 0
+        next_batch_cnt = num_nodal_moves + batch_size
+
+        modified = np.zeros(M.shape[0], dtype=bool)
+        cnt_seq_workers = 0
+        cnt_non_seq_workers = 0
+        update_id_cnt = 0
+
+        for result in movements:
+            (ni, current_block, proposal, delta_entropy, p_accept) = result
+            accept = (np.random.uniform() <= p_accept)
+            proposal_cnt += 1
+
+            if not accept:
+                continue
+
+            t_update_partition_beg = time.time()
+
+            total_num_nodal_moves_itr += 1
+            num_nodal_moves += 1
+            itr_delta_entropy[itr] += delta_entropy
+
+            modified[partition[ni]] = True
+            modified[proposal] = True
+
+            current_block = np.array([partition[ni]])
+
+            if 0:
+                print("Move %s from block %s to block %s." % (ni, current_block, proposal))
+
+            blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+            count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+            blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+            count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+            self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
+
+           
+            (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
+                                compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, [proposal],
+                                                                                   blocks_out, count_out, blocks_in, count_in,
+                                                                                   self_edge_weight, agg_move = 0, use_sparse = 0)
+
+            partition, M = update_partition_single(partition, ni, proposal, M,
+                                                   new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
+
+            t_update_partition_end = time.time()
+
+            update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
+
+            btime = time.time()
+            where_modified = np.where(modified)
+            block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
+            block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
+            block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
+
+            btime_end = time.time()
+            block_sum_time += btime_end - btime
+            block_sum_time_cum += btime_end - btime
+
+        t_merge_end = time.time()
+        merge_time_ms = (t_merge_end - t_merge_start) * 1e3
+        merge_time_ms_cum += merge_time_ms
+
+        if num_nodal_moves != 0:
+            merge_rate_ms = merge_time_ms / num_nodal_moves
+        else:
+            merge_rate_ms = 0.0
+
+        if args.verbose:
+            print("Processed %d nodal movements in %3.4f ms rate = %f per ms." % (num_nodal_moves, merge_time_ms, merge_rate_ms))
+
+            print("Node propose time is %3.2f ms, merge time is %3.2f ms, block sum time is %3.2f ms, partition update time is %3.2f ms, ratio propose to merge %3.2f"
+              % (propose_time_ms_cum, merge_time_ms_cum, block_sum_time * 1e3, update_partition_time_ms_cum,  (propose_time_ms_cum) / merge_time_ms_cum))
+            print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.9f}".format(itr, num_nodal_moves,
+                                                                                itr_delta_entropy[itr] / float(
+                                                                                    overall_entropy_cur)))
+
+        # exit MCMC if the recent change in entropy falls below a small fraction of the overall entropy
+        if itr >= (delta_entropy_moving_avg_window - 1):  
+            if (-np.mean(itr_delta_entropy[(itr - delta_entropy_moving_avg_window + 1):itr]) < (
+                    delta_entropy_threshold * overall_entropy_cur)):
+                    break
+
+    return total_num_nodal_moves_itr
+
+
+def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy_cur, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks):
+    global syms, block_sum_time_cum
+
+    total_num_nodal_moves_itr = 0
+    itr_delta_entropy = np.zeros(max_num_nodal_itr)
+
+    syms = {}
+    lock = mp.Lock()
+
+    parallel_phase2 = (args.parallel_phase & 2) != 0
+
+    for itr in range(max_num_nodal_itr):
+        num_nodal_moves = 0
+        block_sum_time = 0.0
+        itr_delta_entropy[itr] = 0
+
+        propose_time_ms_cum = 0
+        propose_time_workers_ms_cum = 0.0
+        merge_time_ms_cum = 0
+        update_partition_time_ms_cum = 0.0
+        t_useless = 0.0
+        update_shared_time = 0.0
+
+        if parallel_phase2 and n_thread > 0:
+            where_modified_shared = shared_memory_copy(np.zeros(M.shape[0], dtype=bool))
+            (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared) \
+                = (shared_memory_copy(i) for i in (np.array([0]), M, partition, block_degrees, block_degrees_out, block_degrees_in))
+
+        if args.sort:
+            #L = np.argsort(partition)
+            L = entropy_max_argsort(partition)
+        else:
+            L = range(0, N)
+            
+        t_propose_start = time.time()
+
+        if parallel_phase2 and n_thread > 0:
+            state = (update_id_shared, partition_shared, M_shared, num_blocks, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, where_modified_shared)
+
+            syms['lock'] = lock
+            syms['state'] = state
+
+            pool_size = min(n_thread, len(L))
+            pool = Pool(n_thread)
+
+            #print("About to fork %d workers for batch %s." % (pool_size,L))
+
+            movements = pool.imap_unordered(propose_node_movement_wrapper, L)
+        else:
+            movements = (propose_node_movement(i, partition, out_neighbors, in_neighbors, M, num_blocks, block_degrees, block_degrees_out, block_degrees_in) for i in L)
+
+        t_propose_end = time.time()
+        propose_time_ms = (t_propose_end - t_propose_start) * 1e3
+        propose_time_ms_cum += propose_time_ms
+
+        t_merge_start = time.time()
+
+        proposal_cnt = 0
+        next_batch_cnt = num_nodal_moves + batch_size
+        modified = np.zeros(M.shape[0], dtype=bool)
+        cnt_seq_workers = 0
+        cnt_non_seq_workers = 0
+        update_id_cnt = 0
+
+        for result in movements:
+            useless_time_beg = time.time()
+
+            (ni, current_block, proposal, delta_entropy, p_accept, propose_time_worker_ms, is_seq, is_non_seq) = result
+
+            cnt_seq_workers += is_seq
+            cnt_non_seq_workers += is_non_seq
+
+            #print("Got a result for index %d from pid %d" % (ni,pid))
+
+            accept = (np.random.uniform() <= p_accept)
+            proposal_cnt += 1
+            propose_time_workers_ms_cum += propose_time_worker_ms
+
+            useless_time_end = time.time()
+            t_useless += useless_time_end - useless_time_beg
+
+            if not accept:
+                continue
+
+            t_update_partition_beg = time.time()
+
+            total_num_nodal_moves_itr += 1
+            num_nodal_moves += 1
+            itr_delta_entropy[itr] += delta_entropy
+
+            modified[partition[ni]] = True
+            modified[proposal] = True
+
+            current_block = np.array([partition[ni]])
+
+            if 0:
+                print("Move %s from block %s to block %s." % (ni, current_block, proposal))
+
+            blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+            count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+            blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+            count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+            self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
+
+           
+            (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
+                                compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, [proposal],
+                                                                                   blocks_out, count_out, blocks_in, count_in,
+                                                                                   self_edge_weight, agg_move = 0, use_sparse = 0)
+
+            partition, M = update_partition_single(partition, ni, proposal, M,
+                                                   new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
+
+            t_update_partition_end = time.time()
+
+            update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
+
+            if parallel_phase2 and n_thread > 0 and num_nodal_moves >= next_batch_cnt:
+                btime = time.time()
+                where_modified = np.where(modified)
+                block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
+                block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
+                block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
+                next_batch_cnt = num_nodal_moves + batch_size
+
+                btime_end = time.time()
+                block_sum_time += btime_end - btime
+                block_sum_time_cum += btime_end - btime
+
+                update_beg = time.time()
+                update_id_cnt += 1
+
+                lock.acquire()
+
+                M_shared[where_modified, :] = M[where_modified, :]
+                M_shared[:, where_modified] = M[:, where_modified]
+                block_degrees_in_shared[where_modified] = block_degrees_in[where_modified]
+                block_degrees_out_shared[where_modified] = block_degrees_out[where_modified]
+                block_degrees_shared[where_modified] = block_degrees[where_modified]
+
+                where_modified_shared[:] = modified[:]
+                partition_shared[:] = partition[:]
+                update_id_shared[:] = np.array([update_id_cnt])[:]
+
+                lock.release()
+
+                modified = np.zeros(M.shape[0], dtype=bool)
+
+                update_end = time.time()
+                update_shared_time += update_end - update_beg
+
+
+        btime = time.time()
+        where_modified = np.where(modified)
+        block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
+        block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
+        block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
+
+        btime_end = time.time()
+        block_sum_time += btime_end - btime
+        block_sum_time_cum += btime_end - btime
+
+        update_beg = time.time()
+
+        if parallel_phase2 and n_thread > 0:
+            pool.close()
+            pool.join()
+
+        update_end = time.time()
+        update_shared_time += update_end - update_beg
+
+        t_merge_end = time.time()
+        merge_time_ms = (t_merge_end - t_merge_start) * 1e3
+        merge_time_ms_cum += merge_time_ms
+
+        if num_nodal_moves != 0:
+            merge_rate_ms = merge_time_ms / num_nodal_moves
+        else:
+            merge_rate_ms = 0.0
+
+        if args.verbose:
+            print("Processed %d nodal movements in %3.4f ms rate = %f per ms." % (num_nodal_moves, merge_time_ms, merge_rate_ms))
+
+            print("Node propose time is %3.2f ms (master) propose time %3.2f ms (workers) merge time is %3.2f ms block sum time is %3.2f ms partition update time is %3.2f useless time is %3.2f update_shared time is %3.2f ratio propose to merge %3.2f"
+              % (propose_time_ms_cum, propose_time_workers_ms_cum, merge_time_ms_cum, block_sum_time * 1e3, update_partition_time_ms_cum, t_useless * 1e3, update_shared_time * 1e3, (propose_time_ms_cum + propose_time_workers_ms_cum) / merge_time_ms_cum))
+            print("Worker update counts sequential %d non-sequential %d" % (cnt_seq_workers, cnt_non_seq_workers))
+            print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.9f}".format(itr, num_nodal_moves,
+                                                                                itr_delta_entropy[itr] / float(
+                                                                                    overall_entropy_cur)))
+
+        # exit MCMC if the recent change in entropy falls below a small fraction of the overall entropy
+        if itr >= (delta_entropy_moving_avg_window - 1):  
+            if (-np.mean(itr_delta_entropy[(itr - delta_entropy_moving_avg_window + 1):itr]) < (
+                    delta_entropy_threshold * overall_entropy_cur)):
+                    break
+
+    return total_num_nodal_moves_itr
+
 
 def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_threshold, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in, partition):
-    global syms, block_sum_time
+    global syms, block_sum_time_cum
 
     # Dramatis Personae
     M = interblock_edge_count
 
     t_start = time.time()
     parallel_phase1 = (args.parallel_phase & 1) != 0
-    parallel_phase2 = (args.parallel_phase & 2) != 0
+
     n_thread = args.threads
-    max_num_nodal_itr = args.max_num_nodal_itr
-    delta_entropy_moving_avg_window = args.delta_entropy_moving_avg_window
 
     n_merges = 0
     n_proposals_evaluated = 0
@@ -321,9 +714,9 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
 
         # re-initialize edge counts and block degrees
         M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = initialize_edge_counts(out_neighbors,
-                                                                                                           num_blocks_t,
-                                                                                                           partition_t,
-                                                                                                           use_sparse = 0)
+                                                                                               num_blocks_t,
+                                                                                               partition_t,
+                                                                                               use_sparse = 0)
         # compute the global entropy for MCMC convergence criterion
         overall_entropy = compute_overall_entropy(M_t, block_degrees_out_t, block_degrees_in_t, num_blocks_t, N,
                                                   E, use_sparse = 0)
@@ -358,121 +751,14 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
     if args.verbose:
         print("Beginning nodal updates")
 
-    total_num_nodal_moves_itr = 0
-    itr_delta_entropy = np.zeros(max_num_nodal_itr)
-
-    batch_size = max(1, n_thread)
     batch_size = args.node_move_batch_size
 
-    syms = {}
+    parallel_phase2 = (args.parallel_phase & 2) != 0
 
-    for itr in range(max_num_nodal_itr):
-        num_nodal_moves = 0;
-        itr_delta_entropy[itr] = 0
-
-        propose_time_ms_cum = 0
-        merge_time_ms_cum = 0
-
-        for j in range(0, N, batch_size):
-            L = range(j, min(j + batch_size, N))
-
-            t_propose_start = time.time()
-
-            if parallel_phase2 and n_thread > 0:
-                syms['interblock_edge_count'] = M
-                syms['block_partition'] = block_partition
-                syms['block_degrees'] = block_degrees
-                syms['block_degrees_out'] = block_degrees_out
-                syms['block_degrees_in'] = block_degrees_in
-                syms['partition'] = partition
-                syms['num_blocks'] = num_blocks
-                pool_size = min(n_thread, len(L))
-                pool = Pool(n_thread)
-
-                #print("About to fork %d workers for batch %s." % (pool_size,L))
-
-                movements = pool.imap_unordered(propose_node_movement_wrapper, L)
-
-                if 0:
-                    movements_list = []
-                    while True:
-                        result = next(movements, None)
-                        if not result:
-                            break
-                        movements_list.append(result)
-                    movements = movements_list
-            else:
-                movements = (propose_node_movement(i, partition, out_neighbors, in_neighbors, M, num_blocks, block_degrees, block_degrees_out, block_degrees_in) for i in L)
-
-            t_propose_end = time.time()
-            propose_time_ms = (t_propose_end - t_propose_start) * 1e3
-            propose_time_ms_cum += propose_time_ms
-
-            modified = np.zeros(M.shape[0], dtype=bool)
-
-            t_merge_start = time.time()
-
-            for result in movements:
-                (ni, current_block, proposal, delta_entropy, p_accept) = result
-                accept = (np.random.uniform() <= p_accept)
-
-                if not accept:
-                    continue
-
-                total_num_nodal_moves_itr += 1
-                num_nodal_moves += 1
-                itr_delta_entropy[itr] += delta_entropy
-
-                modified[partition[ni]] = True
-                modified[proposal] = True
-
-                current_block = np.array([partition[ni]])
-
-                if 0:
-                    print("Move %s from block %s to block %s." % (ni, current_block, proposal))
-
-                blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
-                count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
-                blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
-                count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
-                self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
-
-                (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
-                                    compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, [proposal],
-                                                                                       blocks_out, count_out, blocks_in, count_in,
-                                                                                       self_edge_weight, agg_move = 0, use_sparse = 0)
-
-                partition,M  = update_partition_single(partition, ni, proposal, M,
-                                                       new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
-
-            btime = time.time()
-            where_modified = np.where(modified)
-            block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
-            block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
-            block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
-
-            t_merge_end = time.time()
-            merge_time_ms = (t_merge_end - t_merge_start) * 1e3
-            merge_time_ms_cum += merge_time_ms
-            block_sum_time += t_merge_end - btime
-
-            if parallel_phase2 and n_thread > 0:
-                pool.close()
-                pool.join()
-
-        print("Node propose time is %3.2f ms merge time is %3.2f ms ratio %3.2f" % (propose_time_ms_cum, merge_time_ms_cum, propose_time_ms_cum / merge_time_ms_cum))
-        if args.verbose:
-            # print("Partition = \n%s" % hash(str(partition)))
-            # print("M = \n%s" % M)
-            print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.7f}".format(itr, num_nodal_moves,
-                                                                                itr_delta_entropy[itr] / float(
-                                                                                    overall_entropy)))
-
-        # exit MCMC if the recent change in entropy falls below a small fraction of the overall entropy
-        if itr >= (delta_entropy_moving_avg_window - 1):  
-            if (-np.mean(itr_delta_entropy[(itr - delta_entropy_moving_avg_window + 1):itr]) < (
-                    delta_entropy_threshold * overall_entropy)):
-                    break
+    if parallel_phase2 and n_thread > 0:
+        total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks)
+    else:
+        total_num_nodal_moves_itr = nodal_moves_sequential(batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks)
 
     # compute the global entropy for determining the optimal number of blocks
     overall_entropy = compute_overall_entropy(M, block_degrees_out, block_degrees_in, num_blocks, N,
@@ -517,6 +803,7 @@ def do_main(args):
     if args.verbose:
         print('Number of nodes: {}'.format(N))
         print('Number of edges: {}'.format(E))
+        print('Nodal updates based on actual moves.')
 
     if use_timeit:
         t_prog_start = time.time()
@@ -524,7 +811,6 @@ def do_main(args):
     # initialize by putting each node in its own block (N blocks)
     num_blocks = N
     partition = np.arange(num_blocks, dtype=int)
-    lock = mp.Lock()
 
     # partition update parameters
     args.beta = 3  # exploitation versus exploration (higher value favors exploitation)
@@ -606,8 +892,8 @@ def do_main(args):
     # evaluate output partition against the true partition
     evaluate_partition(true_partition, partition)
 
-block_sum_time = 0
+block_sum_time_cum = 0
 if __name__ == '__main__':
     # np.seterr(all='raise') 
     do_main(args)
-    print("Block sum time = %s" % block_sum_time)
+    print("Block sum time = %s" % block_sum_time_cum)
