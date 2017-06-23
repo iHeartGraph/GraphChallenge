@@ -10,6 +10,7 @@ import os, sys, argparse
 import time
 import traceback
 import numpy.random
+from compute_delta_entropy import compute_delta_entropy
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-P", "--parallel-phase", type=int, required=False, default=3)
@@ -18,6 +19,7 @@ parser.add_argument("-p", "--parts", type=int, required=False, default=0)
 parser.add_argument("-v", "--verbose", action="store_true", default=False)
 parser.add_argument("-b", "--node-move-batch-size", type=int, required=False, default=1)
 parser.add_argument("-s", "--sort", type=int, required=False, default=0)
+parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
 parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 args = parser.parse_args()
 
@@ -894,6 +896,9 @@ def do_main(args):
 
 block_sum_time_cum = 0
 if __name__ == '__main__':
-    # np.seterr(all='raise') 
+    # np.seterr(all='raise')
+    if args.seed != -1:
+        numpy.random.seed(args.seed % 4294967295)
+
     do_main(args)
     print("Block sum time = %s" % block_sum_time_cum)

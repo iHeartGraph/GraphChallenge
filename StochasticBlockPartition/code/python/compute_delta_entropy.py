@@ -1,16 +1,42 @@
 import numpy as np
 import pickle
 
-def log_nonzero(x):
-    #
-    # if not (x > 0).all():
-    #     raise Exception("Bad value found.")
-    ym = (x != 0)
-    y = x.astype(float)
-    y[ym] = np.log(y[ym])
-    return y
+def entropy_row_calc(x, y, c, ignore=[]):
+    if 1:
+        mask = (x != 0)
+        if ignore:
+            mask[ignore[0]] = 0
+            mask[ignore[1]] = 0
+    else:
+        mask = x.nonzero()[0]
+        mask = [i for i in (set(x.nonzero()[0]) - set(ignore))]
 
-def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
+    xm = x[mask]
+    ym = y[mask]
+    return np.sum(xm * (np.log(xm) - np.log(ym * c)))
+
+def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
+    """Compute change in entropy under the proposal with a faster method."""
+    M_r_t1 = M[r, :]
+    M_s_t1 = M[s, :]
+    M_t2_r = M[:, r]
+    M_t2_s = M[:, s]
+
+    # remove r and s from the cols to avoid double counting
+    ignore = (int(r), int(s))
+
+    # only keep non-zero entries to avoid unnecessary computation
+    d0 = entropy_row_calc(M_r_row.ravel(), d_in_new, d_out_new[r])
+    d1 = entropy_row_calc(M_s_row.ravel(), d_in_new, d_out_new[s])
+    d2 = entropy_row_calc(M_r_col.ravel(), d_out_new, d_in_new[r], ignore)
+    d3 = entropy_row_calc(M_s_col.ravel(), d_out_new, d_in_new[s], ignore)
+    d4 = entropy_row_calc(M_r_t1.ravel(),  d_in, d_out[r])
+    d5 = entropy_row_calc(M_s_t1.ravel(),  d_in, d_out[s])
+    d6 = entropy_row_calc(M_t2_r.ravel(),  d_out, d_in[r], ignore)
+    d7 = entropy_row_calc(M_t2_s.ravel(),  d_out, d_in[s], ignore)
+    return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
+
+def compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the current block.
 
         Parameters
@@ -58,10 +84,6 @@ def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_
         
         where the sum runs over all entries $(t_1, t_2)$ in rows and cols $r$ and $s$ of the edge count matrix"""
 
-    # import sys
-    # pickle.dump((r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new), open("compute_delta_entropy_50000.pickle", "wb"), protocol=2)
-    # sys.exit(0)
-
     M_r_t1 = M[r, :]
     M_s_t1 = M[s, :]
     M_t2_r = M[:, r]
@@ -102,29 +124,24 @@ def compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_
 
     # sum over the two changed rows and cols
     delta_entropy = 0.0
-
-    if 0:
-        # Alternative method (does not appear to be much faster)
-        d0 = -np.sum(M_r_row * (log_nonzero(M_r_row) - log_nonzero(d_in_new_r_row * d_out_new[r])))
-        d1 = -np.sum(M_s_row * (log_nonzero(M_s_row) - log_nonzero(d_in_new_s_row * d_out_new[s])))
-        d2 = -np.sum(M_r_col * (log_nonzero(M_r_col) - log_nonzero(d_out_new_r_col * d_in_new[r])))
-        d3 = -np.sum(M_s_col * (log_nonzero(M_s_col) - log_nonzero(d_out_new_s_col * d_in_new[s])))
-        d4 = np.sum(M_r_t1  * (log_nonzero(M_r_t1)  - log_nonzero(d_in_r_t1 * d_out[r])))
-        d5 = np.sum(M_s_t1  * (log_nonzero(M_s_t1)  - log_nonzero(d_in_s_t1 * d_out[s])))
-        d6 = np.sum(M_t2_r  * (log_nonzero(M_t2_r)  - log_nonzero(d_out_r_col * d_in[r])))
-        d7 = np.sum(M_t2_s  * (log_nonzero(M_t2_s)  - log_nonzero(d_out_s_col * d_in[s])))
-        return sum(d0, d1, d2, d3, d4, d5, d6, d7)
-    else:
-        delta_entropy -= np.sum(M_r_row * np.log(M_r_row.astype(float) / (d_in_new_r_row * d_out_new[r])))
-        delta_entropy -= np.sum(M_s_row * np.log(M_s_row.astype(float) / (d_in_new_s_row * d_out_new[s])))
-        delta_entropy -= np.sum(M_r_col * np.log(M_r_col.astype(float) / (d_out_new_r_col * d_in_new[r])))
-        delta_entropy -= np.sum(M_s_col * np.log(M_s_col.astype(float) / (d_out_new_s_col * d_in_new[s])))
-        delta_entropy += np.sum(M_r_t1 * np.log(M_r_t1.astype(float) / (d_in_r_t1 * d_out[r])))
-        delta_entropy += np.sum(M_s_t1 * np.log(M_s_t1.astype(float) / (d_in_s_t1 * d_out[s])))
-        delta_entropy += np.sum(M_t2_r * np.log(M_t2_r.astype(float) / (d_out_r_col * d_in[r])))
-        delta_entropy += np.sum(M_t2_s * np.log(M_t2_s.astype(float) / (d_out_s_col * d_in[s])))
+    delta_entropy -= np.sum(M_r_row * np.log(M_r_row.astype(float) / (d_in_new_r_row * d_out_new[r])))
+    delta_entropy -= np.sum(M_s_row * np.log(M_s_row.astype(float) / (d_in_new_s_row * d_out_new[s])))
+    delta_entropy -= np.sum(M_r_col * np.log(M_r_col.astype(float) / (d_out_new_r_col * d_in_new[r])))
+    delta_entropy -= np.sum(M_s_col * np.log(M_s_col.astype(float) / (d_out_new_s_col * d_in_new[s])))
+    delta_entropy += np.sum(M_r_t1 * np.log(M_r_t1.astype(float) / (d_in_r_t1 * d_out[r])))
+    delta_entropy += np.sum(M_s_t1 * np.log(M_s_t1.astype(float) / (d_in_s_t1 * d_out[s])))
+    delta_entropy += np.sum(M_t2_r * np.log(M_t2_r.astype(float) / (d_out_r_col * d_in[r])))
+    delta_entropy += np.sum(M_t2_s * np.log(M_t2_s.astype(float) / (d_out_s_col * d_in[s])))
 
     return delta_entropy
+
+def compute_delta_entropy_verify(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
+    delta_entropy1 = compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
+    delta_entropy2 = compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
+    assert(np.abs(delta_entropy1 - delta_entropy2) < 1e-9)
+    return delta_entropy1
+
+compute_delta_entropy = compute_delta_entropy_alt
 
 if __name__ == '__main__':
     import sys
