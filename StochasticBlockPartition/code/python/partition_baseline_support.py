@@ -15,12 +15,20 @@ from munkres import Munkres # for correctness evaluation
 import sys
 from multiprocessing import sharedctypes
 import ctypes
+from compute_delta_entropy import compute_delta_entropy
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
     import graph_tool.all as gt
 
-def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_neighbors=None, in_neighbors=None):
+import random
+def random_permutation(iterable, r=None):
+    "Random selection from itertools.permutations(iterable, r)"
+    pool = tuple(iterable)
+    r = len(pool) if r is None else r
+    return tuple(random.sample(pool, r))
+
+def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_neighbors=None, in_neighbors=None, permutate=False):
     """Load the graph from a TSV file with standard format, and the truth partition if available
 
         Parameters
@@ -73,6 +81,9 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         in_neighbors.extend([[] for i in range(N - len(in_neighbors))])
     weights_included = edge_rows.shape[1] == 3
 
+    if permutate:
+        permutation = [i for i in random_permutation(range(N))]
+
     # load edges to list of lists of out and in neighbors
     for i in range(edge_rows.shape[0]):
         if weights_included:
@@ -80,8 +91,15 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         else:
             edge_weight = 1
         # -1 on the node index since Python is 0-indexed and the standard graph TSV is 1-indexed
-        out_neighbors[edge_rows[i, 0] - 1].append([edge_rows[i, 1] - 1, edge_weight])
-        in_neighbors[edge_rows[i, 1] - 1].append([edge_rows[i, 0] - 1, edge_weight])
+        from_idx = edge_rows[i, 0] - 1
+        to_idx = edge_rows[i, 1] - 1
+
+        if permutate:
+            from_idx = permutation[from_idx]
+            to_idx = permutation[to_idx]
+
+        out_neighbors[from_idx].append([to_idx, edge_weight])
+        in_neighbors [to_idx].append([from_idx, edge_weight])
 
     # convert each neighbor list to neighbor numpy arrays for faster access
     for i in range(N):
@@ -105,10 +123,37 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
             true_b[true_b_rows[i, 0] - 1] = int(
                 true_b_rows[i, 1] - 1)  # -1 since Python is 0-indexed and the TSV is 1-indexed
 
+    if permutate:
+        #in_neighbors = [in_neighbors[i] for i in permutation]
+        #out_neighbors = [out_neighbors[i] for i in permutation]
+        if load_true_partition:
+            true_b = [true_b[i] for i in permutation]
+
     if load_true_partition:
         return out_neighbors, in_neighbors, N, E, true_b
     else:
         return out_neighbors, in_neighbors, N, E
+
+def decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, decimated_piece):
+    """
+    """
+    in_neighbors = in_neighbors[decimated_piece::decimation]
+    out_neighbors = out_neighbors[decimated_piece::decimation]
+    true_partition = true_partition[decimated_piece::decimation]
+    E = sum(len(v) for v in out_neighbors)
+    N = np.int64(len(in_neighbors))
+
+    for i in range(N):
+        xx = (in_neighbors[i][:,0] % decimation) == decimated_piece
+        in_neighbors[i] = in_neighbors[i][xx, :]
+        xx = (out_neighbors[i][:,0] % decimation) == decimated_piece
+        out_neighbors[i] = out_neighbors[i][xx, :]
+
+    for i in range(N):
+        in_neighbors[i][:,0] = in_neighbors[i][:,0] / decimation
+        out_neighbors[i][:,0] = out_neighbors[i][:,0] / decimation
+
+    return out_neighbors, in_neighbors, N, E, true_partition
 
 
 def initialize_partition_variables():
@@ -147,7 +192,7 @@ def initialize_partition_variables():
     return optimal_B_found, old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B, graph_object
 
 
-def initialize_edge_counts(out_neighbors, B, b, use_sparse):
+def initialize_edge_counts(out_neighbors, B, b, use_sparse = False):
     """Initialize the edge count matrix and block degrees according to the current partition
 
         Parameters
@@ -181,9 +226,6 @@ def initialize_edge_counts(out_neighbors, B, b, use_sparse):
         M = sparse.lil_matrix((B, B), dtype=int)
     else:
         M = np.zeros((B,B), dtype=int)
-        #raw = sharedctypes.RawArray(ctypes.c_int64, int(B)*int(B))
-        #M = np.frombuffer(raw, dtype=np.int64).reshape((B,B))
-        #M[:,:] = 0
 
     # compute the initial interblock edge count
     for v in range(len(out_neighbors)):
@@ -371,12 +413,16 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_r_col = M[:, r].copy().reshape(B, 1)
 
         M_r_row[0, b_out] -= count_out
-        M_r_row[0, r] -= np.sum(count_in[np.where(b_in == r)])
-        M_r_row[0, s] += np.sum(count_in[np.where(b_in == r)])
+        where_b_in_r = np.where(b_in == r)
+        
+        M_r_row[0, r] -= np.sum(count_in[where_b_in_r])
+        M_r_row[0, s] += np.sum(count_in[where_b_in_r])
 
         M_r_col[b_in, 0] -= count_in.reshape(M_r_col[b_in, 0].shape)
-        M_r_col[r, 0] -= np.sum(count_out[np.where(b_out == r)])
-        M_r_col[s, 0] += np.sum(count_out[np.where(b_out == r)])
+
+        where_b_out_r = np.where(b_out == r)
+        M_r_col[r, 0] -= np.sum(count_out[where_b_out_r])
+        M_r_col[s, 0] += np.sum(count_out[where_b_out_r])
 
     M_s_row = M[s, :].copy()
     M_s_col = M[:, s].copy()
@@ -384,8 +430,9 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
     M_s_row[:, b_out] += count_out
 
     for i in range(len(s)):
-        M_s_row[i, r]  -= np.sum(count_in[np.where(b_in == s[i])])
-        M_s_row[i, s[i]] += np.sum(count_in[np.where(b_in == s[i])])
+        where_b_in_s = np.where(b_in == s[i])
+        M_s_row[i, r]  -= np.sum(count_in[where_b_in_s])
+        M_s_row[i, s[i]] += np.sum(count_in[where_b_in_s])
 
     M_s_row[:, r] -= count_self
     for i in range(len(s)):
@@ -399,8 +446,9 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_s_col[b_in, :] += count_in.reshape(M_s_col[b_in, :].shape)
 
     for i in range(len(s)):
-        M_s_col[r, i]  -= np.sum(count_out[np.where(b_out == s[i])])
-        M_s_col[s[i], i] += np.sum(count_out[np.where(b_out == s[i])])
+        where_b_out_s = np.where(b_out == s[i])
+        M_s_col[r, i]  -= np.sum(count_out[where_b_out_s])
+        M_s_col[s[i], i] += np.sum(count_out[where_b_out_s])
 
     M_s_col[r, :] -= count_self
 
@@ -556,7 +604,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
     return p_backward / p_forward
 
-def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_for_each_block, b, B, B_to_merge):
+def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_for_each_block, b, B, B_to_merge, verbose=False):
     """Execute the best merge (agglomerative) moves to reduce a set number of blocks
 
         Parameters
@@ -587,6 +635,8 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_
         mergeTo = block_map[best_merge_for_each_block[best_merges[counter]]]
         counter += 1
         if mergeTo != mergeFrom:
+            if verbose:
+                print("Merge from block %s to block %s" % (mergeFrom, mergeTo))
             block_map[np.where(block_map == mergeFrom)] = mergeTo
             b[np.where(b == mergeFrom)] = mergeTo
             num_merge += 1

@@ -1,15 +1,13 @@
 import numpy as np
 import pickle
 
-def entropy_row_calc(x, y, c, ignore=[]):
+def entropy_row_calc(x, y, c, ignore=()):
     if 1:
         mask = (x != 0)
-        if ignore:
-            mask[ignore[0]] = 0
-            mask[ignore[1]] = 0
+        for i in ignore:
+            mask[i] = 0
     else:
-        mask = x.nonzero()[0]
-        mask = [i for i in (set(x.nonzero()[0]) - set(ignore))]
+        mask = [i for i in (set(np.flatnonzero(x)) - set(ignore))]
 
     xm = x[mask]
     ym = y[mask]
