@@ -1021,18 +1021,49 @@ def do_main(args):
         out_neighbors, in_neighbors, N, E, true_partition = decimate_graph(out_neighbors, in_neighbors, true_partition,
                                                                            decimation = args.predecimation, decimated_piece = 0)
 
-    decimation = args.decimation
 
-    if decimation > 1:
+    if args.mpi:
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        mpi_procs = 2**int(np.log2(comm.size))
+
+        # MPI-based decimation is only supported for powers of 2
+        if comm.rank >= mpi_procs:
+            comm.Barrier()
+            return
+
+        print("Hello! I am rank %4d from %4d running in total limit is %d" % (comm.rank, comm.size, mpi_procs))
+
+        decimation = mpi_procs
+        out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition_piece \
+            = decimate_graph(out_neighbors, in_neighbors, true_partition,
+                             decimation, decimated_piece = comm.rank)
+
+        t_prog_start = timeit.default_timer()
+        partition, M = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args.verbose)
+        t_prog_end = timeit.default_timer()
+
+        if comm.rank != 0:
+            comm.send(true_partition_piece, dest=0, tag=11)
+            comm.send(partition, dest=0, tag=11)
+            comm.Barrier()
+            return
+        else:
+            true_partitions = [true_partition_piece] + [comm.recv(source=i, tag=11) for i in range(1, mpi_procs)]
+            partitions = [partition] + [comm.recv(source=i, tag=11) for i in range(1, mpi_procs)]
+            comm.Barrier()
+
+    elif args.decimation > 1:
+        decimation = args.decimation
         t_prog_start = timeit.default_timer()
 
         pieces = [decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
         _,_,_,_,true_partitions = zip(*pieces)
 
         if args.verbose > 1:
-            for j,true_partition in enumerate(true_partitions):
+            for j,_ in enumerate(true_partitions):
                 print("Overall True partition %d statistics:" % (j))
-                for i,e in sorted([(e,i) for (i,e) in Counter(true_partition).items()]):
+                for i,e in sorted([(e,i) for (i,e) in Counter(true_partitions[j]).items()]):
                     print("%5d : %3d" % (i,e,))
 
         pool = NonDaemonicPool(decimation)
@@ -1042,6 +1073,7 @@ def do_main(args):
 
         pool.close()
     else:
+        decimation = 1
         t_prog_start = timeit.default_timer()
         partition, M = find_optimal_partition(out_neighbors, in_neighbors, N, E, args.verbose)
         t_prog_end = timeit.default_timer()
@@ -1140,6 +1172,7 @@ if __name__ == '__main__':
     parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
     parser.add_argument("-s", "--sort", type=int, required=False, default=0)
     parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
+    parser.add_argument("--mpi", action="store_true", default=False)
     parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 
     # Debugging options
