@@ -137,6 +137,7 @@ def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block
 
 update_id = -1
 def propose_node_movement_wrapper(tup):
+
     global update_id, partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in
 
     start,stop,step = tup
@@ -1010,18 +1011,34 @@ def do_main(args):
 
     out_neighbors, in_neighbors, N, E, true_partition = load_graph_parts(input_filename)
 
+    if args.verbose > 1:
+        from collections import Counter
+        print("Overall true partition statistics:")
+        for i,e in sorted([(e,i) for (i,e) in Counter(true_partition).items()]):
+            print("%5d : %3d" % (i,e,))
+
+    if args.predecimation > 1:
+        out_neighbors, in_neighbors, N, E, true_partition = decimate_graph(out_neighbors, in_neighbors, true_partition,
+                                                                           decimation = args.predecimation, decimated_piece = 0)
+
     decimation = args.decimation
 
     if decimation > 1:
         t_prog_start = timeit.default_timer()
 
         pieces = [decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
+        _,_,_,_,true_partitions = zip(*pieces)
+
+        if args.verbose > 1:
+            for j,true_partition in enumerate(true_partitions):
+                print("Overall True partition %d statistics:" % (j))
+                for i,e in sorted([(e,i) for (i,e) in Counter(true_partition).items()]):
+                    print("%5d : %3d" % (i,e,))
 
         pool = NonDaemonicPool(decimation)
 
         results = pool.map(find_optimal_partition_wrapper, pieces)
         partitions,Ms = (list(i) for i in zip(*results))
-        _,_,_,_,true_partitions = zip(*pieces)
 
         pool.close()
     else:
@@ -1123,10 +1140,14 @@ if __name__ == '__main__':
     parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
     parser.add_argument("-s", "--sort", type=int, required=False, default=0)
     parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
+    parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
+
+    # Debugging options
     parser.add_argument("--profile", type=str, required=False, default="")
     parser.add_argument("--pipe", type=int, required=False, default=0)
     parser.add_argument("--test-decimation", type=int, required=False, default=0)
-    parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
+    parser.add_argument("--predecimation", type=int, required=False, default=0)
+
     args = parser.parse_args()
 
     # np.seterr(all='raise')
