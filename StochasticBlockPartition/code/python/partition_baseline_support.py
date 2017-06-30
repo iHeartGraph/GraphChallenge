@@ -630,13 +630,14 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_
     block_map = np.arange(B)
     num_merge = 0
     counter = 0
+
     while num_merge < B_to_merge:
         mergeFrom = best_merges[counter]
         mergeTo = block_map[best_merge_for_each_block[best_merges[counter]]]
         counter += 1
         if mergeTo != mergeFrom:
             if verbose:
-                print("Merge from block %s to block %s" % (mergeFrom, mergeTo))
+                print("Merge %d of %d from block %s to block %s" % (num_merge, B_to_merge, mergeFrom, mergeTo))
             block_map[np.where(block_map == mergeFrom)] = mergeTo
             b[np.where(b == mergeFrom)] = mergeTo
             num_merge += 1

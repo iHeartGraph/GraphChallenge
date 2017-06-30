@@ -2,33 +2,15 @@ from partition_baseline_support import *
 import multiprocessing as mp
 import multiprocessing.pool
 from multiprocessing import Pool, Value, current_process
-
 from functools import reduce
 import pickle
-
-use_timeit = True # for timing runs (optional)
-if use_timeit:
-    import timeit
+import timeit
 import os, sys, argparse
 import time, struct
 import traceback
 import numpy.random
+import scipy.stats
 from compute_delta_entropy import compute_delta_entropy
-
-parser = argparse.ArgumentParser()
-parser.add_argument("-P", "--parallel-phase", type=int, required=False, default=3)
-parser.add_argument("-t", "--threads", type=int, required=False, default=0)
-parser.add_argument("-p", "--parts", type=int, required=False, default=0)
-parser.add_argument("-d", "--decimation", type=int, required=False, default=0)
-parser.add_argument("-v", "--verbose", type=int, required=False, default=0)
-parser.add_argument("-b", "--node-move-update-batch-size", type=int, required=False, default=1)
-parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
-parser.add_argument("-s", "--sort", type=int, required=False, default=0)
-parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
-parser.add_argument("--profile", type=str, required=False, default="")
-parser.add_argument("--pipe", type=int, required=False, default=0)
-parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
-args = parser.parse_args()
 
 import random
 def random_permutation(iterable, r=None):
@@ -204,16 +186,16 @@ def propose_node_movement_wrapper(tup):
     lock.release()
 
     # Ensure every worker has a different random seed.
-    numpy.random.seed((pid + int(time.time() * 1e6)) % 4294967295)
+    numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
 
     for current_node in range(start, stop, step):
 
-        t0 = time.time()
+        t0 = timeit.default_timer()
 
         res = propose_node_movement(current_node, partition, out_neighbors, in_neighbors,
                         interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in)
 
-        t1 = time.time()
+        t1 = timeit.default_timer()
         t_elapsed_ms = (t1 - t0) * 1e3
         (ni, current_block, proposal, delta_entropy, p_accept) = res
         accept = (np.random.uniform() <= p_accept)
@@ -387,13 +369,13 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
 
         modified = np.zeros(M.shape[0], dtype=bool)
 
-        t_merge_start = time.time()
+        t_merge_start = timeit.default_timer()
 
         for i in L:
-            t_propose_start = time.time()
+            t_propose_start = timeit.default_timer()
             movement = propose_node_movement(i, partition, out_neighbors, in_neighbors, M, num_blocks, block_degrees, block_degrees_out, block_degrees_in)
 
-            t_propose_end = time.time()
+            t_propose_end = timeit.default_timer()
             propose_time = (t_propose_end - t_propose_start)
             propose_time_cum += propose_time
 
@@ -405,7 +387,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             if not accept:
                 continue
 
-            t_update_partition_beg = time.time()
+            t_update_partition_beg = timeit.default_timer()
 
             total_num_nodal_moves_itr += 1
             num_nodal_moves += 1
@@ -433,21 +415,21 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             partition, M = update_partition_single(partition, ni, proposal, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
 
-            t_update_partition_end = time.time()
+            t_update_partition_end = timeit.default_timer()
 
             update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
 
-            btime = time.time()
+            btime = timeit.default_timer()
             where_modified = np.where(modified)
             block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
             block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
             block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
 
-            btime_end = time.time()
+            btime_end = timeit.default_timer()
             block_sum_time += btime_end - btime
             block_sum_time_cum += btime_end - btime
 
-        t_merge_end = time.time()
+        t_merge_end = timeit.default_timer()
         merge_time = (t_merge_end - t_merge_start)
         merge_time_cum += merge_time
 
@@ -535,7 +517,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         else:
             L = range(0, N)
             
-        t_propose_start = time.time()
+        t_propose_start = timeit.default_timer()
 
         propose_movement_batch_size = 10
 
@@ -547,11 +529,11 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         else:
             status = [pool.apply_async(propose_node_movement_wrapper, (j,)) for j in chunks]
 
-        t_propose_end = time.time()
+        t_propose_end = timeit.default_timer()
         propose_time_ms = (t_propose_end - t_propose_start) * 1e3
         propose_time_ms_cum += propose_time_ms
 
-        t_merge_start = time.time()
+        t_merge_start = timeit.default_timer()
 
         proposal_cnt = 0
         next_batch_cnt = num_nodal_moves + batch_size
@@ -569,7 +551,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     
             for ni in range(start,stop,step):
 
-                useless_time_beg = time.time()
+                useless_time_beg = timeit.default_timer()
 
                 proposal = results_proposal[ni]
                 delta_entropy = results_delta_entropy[ni]
@@ -586,11 +568,11 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                 proposal_cnt += 1
                 propose_time_workers_ms_cum += propose_time_worker_ms
 
-                useless_time_end = time.time()
+                useless_time_end = timeit.default_timer()
                 t_useless += useless_time_end - useless_time_beg
 
                 if accept:
-                    t_update_partition_beg = time.time()
+                    t_update_partition_beg = timeit.default_timer()
 
                     total_num_nodal_moves_itr += 1
                     num_nodal_moves += 1
@@ -619,23 +601,23 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     partition, M = update_partition_single(partition, ni, proposal, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
 
-                    t_update_partition_end = time.time()
+                    t_update_partition_end = timeit.default_timer()
 
                     update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
 
                 if num_nodal_moves >= next_batch_cnt or proposal_cnt == N:
-                    btime = time.time()
+                    btime = timeit.default_timer()
                     where_modified = np.where(modified)
                     block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
                     block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
                     block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
                     next_batch_cnt = num_nodal_moves + batch_size
 
-                    btime_end = time.time()
+                    btime_end = timeit.default_timer()
                     block_sum_time += btime_end - btime
                     block_sum_time_cum += btime_end - btime
 
-                    update_beg = time.time()
+                    update_beg = timeit.default_timer()
                     update_id_cnt += 1
 
                     block = (proposal_cnt == N)
@@ -656,10 +638,10 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                         modified[where_modified] = False
 
-                    update_end = time.time()
+                    update_end = timeit.default_timer()
                     update_shared_time += update_end - update_beg
 
-        t_merge_end = time.time()
+        t_merge_end = timeit.default_timer()
         merge_time_ms = (t_merge_end - t_merge_start) * 1e3
         merge_time_ms_cum += merge_time_ms
 
@@ -694,7 +676,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
     # Dramatis Personae
     M = interblock_edge_count
 
-    t_start = time.time()
+    t_start = timeit.default_timer()
     parallel_phase1 = (args.parallel_phase & 1) != 0
 
     n_thread = args.threads
@@ -704,7 +686,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
 
     # begin agglomerative partition updates (i.e. block merging)
     if verbose:
-        print("\nMerging down blocks from {} to {} at time {:3.3f}".format(num_blocks, num_target_blocks, time.time() - t_prog_start))
+        print("\nMerging down blocks from {} to {} at time {:3.3f}".format(num_blocks, num_target_blocks, timeit.default_timer() - t_prog_start))
 
     best_merge_for_each_block = np.ones(num_blocks, dtype=int) * -1  # initialize to no merge
     delta_entropy_for_each_block = np.ones(num_blocks) * np.Inf  # initialize criterion
@@ -774,7 +756,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
        and overall_entropy_per_num_blocks[1] < overall_entropy_per_num_blocks[0] \
        and overall_entropy_per_num_blocks[1] < overall_entropy_per_num_blocks[2]:
         if verbose:
-            print("Optimal stopping criterion found at %d blocks derivative %s at time %s." % (num_target_blocks[1], dS_dn, time.time() - t_prog_start))
+            print("Optimal stopping criterion found at %d blocks derivative %s at time %s." % (num_target_blocks[1], dS_dn, timeit.default_timer() - t_prog_start))
 
         optimal_stop_found = True
         best_idx = 1
@@ -811,7 +793,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
                                               E, use_sparse = 0)
 
     if verbose:
-        t_end = time.time()
+        t_end = timeit.default_timer()
         time_taken = t_end - t_start
         print(
             "Total number of nodal moves: {:3d}, overall_entropy: {:0.2f}".format(total_num_nodal_moves_itr, overall_entropy))
@@ -947,26 +929,17 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     Process = NoDaemonProcess
 
 
-def merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition, i0, B0, i1, B1):
+def merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition0, partition1, partition_offset_0, partition_offset_1, B0, B1):
     """
     Merge two partitions each from a decimated piece of the graph.
-
-    Parameters
-    ----------
-    partition - Vertex to block number map
-    i0 - Starting offset of partition 0
-    i1 - Starting offset of partition 1
-    B0 - Unique number of blocks in partition 0
-    B1 - Unique number of blocks in partition 1
     """
-    B = B0 + B1
-
-    # Now reduce by merging down blocks.
+    # Now reduce by merging down blocks from partition 0 into partition 1.
+    # This requires computing delta_entropy over all of M (hence the partition_offsets are needed).
 
     delta_entropy = np.empty((B0,B1))
 
     for r in range(B0):
-        current_block = np.array([r + i0])
+        current_block = np.array([r + partition_offset_0])
         ii = M[:, current_block].nonzero()
         oo = M[current_block, :].nonzero()
         in_blocks = np.vstack((ii[0], M[ii[0], current_block])).T
@@ -978,7 +951,7 @@ def merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, part
         num_neighbor_edges = num_out_neighbor_edges + num_in_neighbor_edges
 
         for s in range(B1):
-            proposal = np.array([s + i1])
+            proposal = np.array([s + partition_offset_1])
 
             new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col \
                 = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
@@ -1006,21 +979,30 @@ def merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, part
                                                         block_degrees_in_new)
 
     best_merge_for_each_block = np.argmin(delta_entropy, axis = 1)
+
+    if args.verbose > 2:
+        print("delta_entropy = \n%s" % delta_entropy)
+        print("best_merge_for_each_block = %s" % best_merge_for_each_block)
+
     delta_entropy_for_each_block = delta_entropy[np.arange(delta_entropy.shape[0]), best_merge_for_each_block]
 
-    num_blocks = B
-    num_blocks_to_merge = B - B1
+    # Global number of blocks (when all pieces are considered together).
+    num_blocks = M.shape[0]
+    num_blocks_to_merge = B0
     best_merges = delta_entropy_for_each_block.argsort()
 
+    # Note: partition0 will be modified in carry_out_best_merges
     (partition, num_blocks) = carry_out_best_merges(delta_entropy_for_each_block,
-                                                    best_merges, best_merge_for_each_block + i1, partition, num_blocks, num_blocks_to_merge, verbose=False)
+                                                    best_merges,
+                                                    best_merge_for_each_block + partition_offset_1,
+                                                    partition0,
+                                                    num_blocks,
+                                                    num_blocks_to_merge, verbose=(args.verbose > 2))
 
-    return (partition, num_blocks)
+    return partition, num_blocks
 
 
 def do_main(args):
-    # global N, E, out_neighbors, in_neighbors, true_partition, t_prog_start
-
     input_filename = args.input_filename
     args.visualize_graph = False  # whether to plot the graph layout colored with intermediate partitions
 
@@ -1031,59 +1013,96 @@ def do_main(args):
     decimation = args.decimation
 
     if decimation > 1:
-        t_prog_start = time.time()
+        t_prog_start = timeit.default_timer()
 
-        pieces = (decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation))
+        pieces = [decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
 
         pool = NonDaemonicPool(decimation)
 
         results = pool.map(find_optimal_partition_wrapper, pieces)
-        partitions,Ms = zip(*results)
+        partitions,Ms = (list(i) for i in zip(*results))
+        _,_,_,_,true_partitions = zip(*pieces)
 
         pool.close()
     else:
-        t_prog_start = time.time()
+        t_prog_start = timeit.default_timer()
         partition, M = find_optimal_partition(out_neighbors, in_neighbors, N, E, args.verbose)
-        t_prog_end = time.time()
+        t_prog_end = timeit.default_timer()
+
+        if args.test_decimation > 0:
+            decimation = args.test_decimation
+            true_partitions = [true_partition[i::decimation] for i in range(decimation)]
+            partitions = [partition[i::decimation] for i in range(decimation)]
 
 
     if decimation > 1:
-        if args.debug:
-            print("")
-            print("Evaluate subgraph 0:")
-            evaluate_partition(true_partitions[0], partitions[0])
-            print("")
-            print("Evaluate subgraph 1")
-            evaluate_partition(true_partitions[1], partitions[1])
+        t_decimation_merge_start = timeit.default_timer()
+
+        if args.verbose > 1:
+            for i in range(decimation):
+                print("")
+                print("Evaluate subgraph %d:" % i)
+                evaluate_partition(true_partitions[i], partitions[i])
+
+        while decimation > 1:
+
+            Bs = [max(partitions[i]) + 1 for i in range(decimation)]
+            B =  sum(Bs)
+
+            # This partition is for the purpose of computing M.
+            # And each partition[i] will have an offset added to so all the interim partition ranges are globally unique.
+            #
+
+            partition = np.zeros(N, dtype=int)
+
+            partition_offsets = np.zeros(decimation, dtype=int)
+            partition_offsets[1:] = np.cumsum(Bs)[:-1]
+
+            if args.verbose > 2:
+                print("")
+                print("Reconstitute graph from %d pieces B[piece] = %s" % (decimation,Bs))
+                mode_B = scipy.stats.mode(Bs)[0]
+                print("mode of Bs = %s" % mode_B)
+                print("partition_offsets = %s" % partition_offsets)
+
+            for i in range(decimation):
+                partition[i::decimation] = partitions[i] + partition_offsets[i]
+
+            # It would likely be faster to re-use already computed values of M from pieces
+            # M[ 0:B0,     0:B0   ] = M_0
+            # M[B0:B0+B1, B0:B0+B1] = M_1
+            # Instead of relying on initialize_edge_counts
+
+            M, block_degrees_out, block_degrees_in, block_degrees \
+                = initialize_edge_counts(out_neighbors, B, partition)
+
+            if args.verbose > 2:
+                print("M.shape = %s, M = \n%s" % (str(M.shape),M))
+
+            if decimation == 2:
+                partitions[0],num_blocks = merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees,
+                                            partitions[0], partitions[1], partition_offsets[0], partition_offsets[1], Bs[0], Bs[1])
+            else:
+                L = [i for i in range(decimation // 2)]
+                for i in L:
+                    j = i + decimation // 2
+                    partitions[i],num_blocks = merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees,
+                                                                partitions[i], partitions[j], partition_offsets[i], partition_offsets[j], Bs[i], Bs[j])
+                    merged = np.empty(len(partitions[i]) + len(partitions[j]), dtype=int)
+                    merged[0::2] = partitions[i]
+                    merged[1::2] = partitions[j]
+                    partitions[i] = merged
+
+
+            decimation //= 2
 
         partition = np.zeros(N, dtype=int)
-        Bs = [max(partitions[i]) + 1 for i in range(decimation)]
-        B0 = Bs[0]
-        B1 = Bs[1]
-        B =  B0 + B1
+        for i in range(2):
+            partition[i::2] = partitions[i]
 
-        if B0 > B1:
-            (B0,partitions[0],M_0) = (B1,partitions[1],M_1)
-
-        B_offset = 0
-        for i in range(decimation):
-            partition[i::decimation] = partitions[i] + B_offset
-            B_offset += Bs[i]
-
-        print("")
-        print("Reconstitute full graph B[piece] = %s" % (Bs))
-
-        # It would likely be faster to re-use already computed values of M from pieces
-        # M[ 0:B0,     0:B0   ] = M_0
-        # M[B0:B0+B1, B0:B0+B1] = M_1
-        # Instead of relying on initialize_edge_counts
-
-        M, block_degrees_out, block_degrees_in, block_degrees \
-            = initialize_edge_counts(out_neighbors, B, partition)
-
-        partition,num_blocks = merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition, 0, Bs[0], Bs[0], Bs[1])
-
-        t_prog_end = time.time()
+        t_decimation_merge_end = timeit.default_timer()      
+        t_prog_end = timeit.default_timer()
+        print("Decimation merge time is %3.5f" % (t_decimation_merge_end - t_decimation_merge_start))
 
     print('\nGraph partition took {} seconds'.format(t_prog_end - t_prog_start))
     evaluate_partition(true_partition, partition)
@@ -1091,11 +1110,35 @@ def do_main(args):
 block_sum_time_cum = 0
 # xxx global for use in merge down blocks incremental time
 # does not affect overall graph partition time report
-t_prog_start = time.time()
+t_prog_start = timeit.default_timer()
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-P", "--parallel-phase", type=int, required=False, default=3)
+    parser.add_argument("-t", "--threads", type=int, required=False, default=0)
+    parser.add_argument("-p", "--parts", type=int, required=False, default=0)
+    parser.add_argument("-d", "--decimation", type=int, required=False, default=0)
+    parser.add_argument("-v", "--verbose", type=int, required=False, default=0)
+    parser.add_argument("-b", "--node-move-update-batch-size", type=int, required=False, default=1)
+    parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
+    parser.add_argument("-s", "--sort", type=int, required=False, default=0)
+    parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
+    parser.add_argument("--profile", type=str, required=False, default="")
+    parser.add_argument("--pipe", type=int, required=False, default=0)
+    parser.add_argument("--test-decimation", type=int, required=False, default=0)
+    parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
+    args = parser.parse_args()
+
     # np.seterr(all='raise')
     args.debug = 0
+
+    if args.verbose > 0:
+        print("Arguments:")
+        d = vars(args)
+        args_sorted = sorted([i for i in d.items()])
+        for k,v in args_sorted:
+            print("%s : %s" % (k,v))
+        print("")
 
     if args.seed != -1:
         numpy.random.seed(args.seed % 4294967295)
