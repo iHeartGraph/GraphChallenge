@@ -49,7 +49,7 @@ def entropy_max_argsort(x):
     return out
 
 
-def compute_best_merge_and_entropy_wrapper(tup):
+def compute_best_block_merge_wrapper(tup):
     (blocks, num_blocks) = tup
 
     interblock_edge_count = syms['interblock_edge_count']
@@ -59,9 +59,9 @@ def compute_best_merge_and_entropy_wrapper(tup):
     block_degrees_in = syms['block_degrees_in']
     partition = syms['partition']
 
-    return compute_best_merge_and_entropy(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in)
+    return compute_best_block_merge(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in)
 
-def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block_degrees, n_proposal, block_degrees_out, block_degrees_in):
+def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degrees, n_proposal, block_degrees_out, block_degrees_in):
     best_overall_merge = [-1 for i in blocks]
     best_overall_delta_entropy = [np.Inf for i in blocks]
     n_proposals_evaluated = 0
@@ -234,7 +234,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
     proposal = int(proposal)
 
     # determine whether to accept or reject the proposal
-    if (proposal == current_block):
+    if proposal == current_block:
         accepted = 0
         delta_entropy = 0
         return current_node, current_block, int(proposal), delta_entropy, accepted
@@ -721,7 +721,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         pool_size = min(n_thread, num_blocks)
 
         pool = Pool(n_thread)
-        for current_blocks,best_merge,best_delta_entropy,fresh_proposals_evaluated in pool.imap_unordered(compute_best_merge_and_entropy_wrapper, [((i,),num_blocks) for i in L]):
+        for current_blocks,best_merge,best_delta_entropy,fresh_proposals_evaluated in pool.imap_unordered(compute_best_block_merge_wrapper, [((i,),num_blocks) for i in L]):
             for current_block_idx,current_block in enumerate(current_blocks):
                 best_merge_for_each_block[current_block] = best_merge[current_block_idx]
                 delta_entropy_for_each_block[current_block] = best_delta_entropy[current_block_idx]
@@ -729,7 +729,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         pool.close()
     else:
         current_blocks,best_merge,best_delta_entropy,fresh_proposals_evaluated \
-            = compute_best_merge_and_entropy(range(num_blocks), num_blocks, M,
+            = compute_best_block_merge(range(num_blocks), num_blocks, M,
                         block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in)
 
         n_proposals_evaluated += fresh_proposals_evaluated
