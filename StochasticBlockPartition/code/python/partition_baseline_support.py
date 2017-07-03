@@ -236,7 +236,7 @@ def initialize_edge_counts(out_neighbors, B, b):
     return M, d_out, d_in, d
 
 
-def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_proposals=1, compute_neighbor_edges = 0):
+def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_proposals=1):
     """Propose a new block assignment for the current node or block
 
         Parameters
@@ -272,65 +272,41 @@ def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_pro
     if n_neighbors == 0:
         return r
 
-    try:
-        rand_neighbor = np.random.choice(neighbors[:,0], p=neighbors[:,1] / float(n_neighbors), size=draws)
-    except:
-        print("An exception occured:")
-        print("neighbors = %s n_neighbors = %s" % (str(neighbors),str(n_neighbors)))
+    rand_neighbor = np.random.choice(neighbors[:,0], p=neighbors[:,1] / float(n_neighbors), size=draws)
+    #rand_neighbor = np.random.choice(neighbors[:,0])
 
     u = b[rand_neighbor]
-    probs = (np.random.uniform(size=draws) <= B/(d[u].astype(float)+B))
 
-    if agg_move:
-        # force proposals to be different from current block via a random offset and modulo
-        s1 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
-    else:
-        s1 = np.random.randint(B, size=draws)
-
-    # proposals by random draw from neighbors of block partition[rand_neighbor]
-    multinomial_prob = (M[u, :].T + M[:, u]) / d[u].astype(float)
-    if agg_move: # force proposal to be different from current block
-        multinomial_prob[r] = 0
-
-    if multinomial_prob.sum() == 0:
-        # the current block has no neighbors. randomly propose a different block
-        s2 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
-    else:
-        multinomial_prob /= multinomial_prob.sum()
-        # numpy random.multinomial does not support multi-dimensional draws
-        c = multinomial_prob.cumsum(axis=0)
-        u = np.random.uniform(size=draws)
-        s2 = (np.argmax((u < c), axis=0))
-
-    #s = (probs & s1) | (~probs & s2)
-    s = np.zeros(draws, dtype=int)
-    s[np.where(probs)] = s1
-    s[np.where(~probs)] = s2
-    # print(r, probs, s1, s2, s)
-    return s
-
-    # propose a new block randomly
-    if np.random.uniform(size=draws) <= B/float(d[u]+B):  # chance inversely prop. to block_degree
+    if np.random.uniform() <= B / (d[u].astype(float) + B):
         if agg_move:
-            # force proposal to be different from current block via a random offset and modulo
-            s = (r + 1 + np.random.randint(B - 1)) % B
-            # s = np.array([s]) # keep while r is scalar
+            # force proposals to be different from current block via a random offset and modulo
+            s1 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
         else:
-            s = np.array([np.random.randint(B)])
-    else:  # propose by random draw from neighbors of block partition[rand_neighbor]
-        multinomial_prob = (M[u, :].transpose() + M[:, u]) / float(d[u])
-        if agg_move:  # force proposal to be different from current block
+            s1 = np.random.randint(B, size=draws)
+
+        return s1
+    else:
+        # proposals by random draw from neighbors of block partition[rand_neighbor]
+        multinomial_prob = (M[u, :].T + M[:, u]).ravel() / d[u].astype(float)
+
+        if agg_move: # force proposal to be different from current block
             multinomial_prob[r] = 0
-            if multinomial_prob.sum() == 0:  # the current block has no neighbors. randomly propose a different block
-                s = (r + 1 + np.random.randint(B - 1)) % B
-                # s = np.array([s]) # keep while r is scalar
-                return s, k_out, k_in, k
-            else:
-                multinomial_prob = multinomial_prob / multinomial_prob.sum()
-        candidates = multinomial_prob.nonzero()[0]
-        s = candidates[np.flatnonzero(np.random.multinomial(1, multinomial_prob[candidates].ravel()))[0]]
-        s = np.array([s])
-    return s, k_out, k_in, k
+
+        nz = multinomial_prob.nonzero()[0]
+
+        if len(nz) == 0:
+            # the current block has no neighbors. randomly propose a different block
+            s2 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
+        else:
+            multinomial_prob[nz] /= multinomial_prob[nz].sum()
+            #s2 = np.random.choice(nz, p = multinomial_prob[nz])
+
+            # numpy random.multinomial does not support multi-dimensional draws
+            c = multinomial_prob.cumsum(axis=0)
+            u = np.random.uniform(size=draws)
+            s2 = np.argmax((u < c), axis=0)
+
+        return s2
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
