@@ -236,17 +236,15 @@ def initialize_edge_counts(out_neighbors, B, b):
     return M, d_out, d_in, d
 
 
-def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, n_proposals=10):
+def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_proposals=1, compute_neighbor_edges = 0):
     """Propose a new block assignment for the current node or block
 
         Parameters
         ----------
         r : int
                     current block assignment for the node under consideration
-        neighbors_out : ndarray (int) of two columns
-                    out neighbors array where the first column is the node indices and the second column is the edge weight
-        neighbors_in : ndarray (int) of two columns
-                    in neighbors array where the first column is the node indices and the second column is the edge weight
+        neighbors : ndarray (int)
+                    neighbors of this vertex
         b : ndarray (int)
                     array of block assignment for each node
         M : ndarray or sparse matrix (int), shape = (#blocks, #blocks)
@@ -257,18 +255,10 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
                     total number of blocks
         agg_move : bool
                     whether the proposal is a block move
-
         Returns
         -------
         s : int
                     proposed block assignment for the node under consideration
-        k_out : int
-                    the out degree of the node
-        k_in : int
-                    the in degree of the node
-        k : int
-                    the total degree of the node
-
         Notes
         -----
         - d_u: degree of block u
@@ -276,23 +266,17 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
         Randomly select a neighbor of the current node, and obtain its block assignment u. With probability \frac{B}{d_u + B}, randomly propose
         a block. Otherwise, randomly selects a neighbor to block u and propose its block assignment. For block (agglomerative) moves,
         avoid proposing the current block."""
-    neighbors = np.concatenate((neighbors_out, neighbors_in))
-    k_out = sum(neighbors_out[:,1])
-    k_in = sum(neighbors_in[:,1])
-    k = k_out + k_in
-    draws = n_proposals
 
+    draws = n_proposals
     # xxx no neighbor available
-    if k == 0:
-        return r, k_out, k_in, k
+    if n_neighbors == 0:
+        return r
 
     try:
-        rand_neighbor = np.random.choice(neighbors[:,0], p=neighbors[:,1]/float(k), size=draws)
+        rand_neighbor = np.random.choice(neighbors[:,0], p=neighbors[:,1] / float(n_neighbors), size=draws)
     except:
         print("An exception occured:")
-        print("k = %s" % str(k))
-        print("neighbors[:,0] = %s" % str(neighbors[:,0]))
-        print("neighbors[:,1] = %s" % str(neighbors[:,1]))
+        print("neighbors = %s n_neighbors = %s" % (str(neighbors),str(n_neighbors)))
 
     u = b[rand_neighbor]
     probs = (np.random.uniform(size=draws) <= B/(d[u].astype(float)+B))
@@ -323,7 +307,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
     s[np.where(probs)] = s1
     s[np.where(~probs)] = s2
     # print(r, probs, s1, s2, s)
-    return s, k_out, k_in, k
+    return s
 
     # propose a new block randomly
     if np.random.uniform(size=draws) <= B/float(d[u]+B):  # chance inversely prop. to block_degree
