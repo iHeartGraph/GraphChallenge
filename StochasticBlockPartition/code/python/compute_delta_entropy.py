@@ -1,25 +1,23 @@
-#from numba import jit
-
 import numpy as np
 
-#@jit(nopython=True, cache=True)
 def entropy_row_calc(x, y, c):
     mask = x.nonzero()[0]
     xm = x[mask]
     ym = y[mask]
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
 
-#@jit(nopython=True, cache=True)
 def entropy_row_calc_ignore(x, y, c, r, s):
-    #mask = [i for i in x.nonzero()[0] if i != r and i != s]
-    mask = (x != 0)
-    mask[r] = 0
-    mask[s] = 0
+    if 0:
+        mask = (x != 0)
+        mask[r] = 0
+        mask[s] = 0
+    else:
+        mask = [i for i in x.nonzero()[0] if i != r and i != s]
+
     xm = x[mask]
     ym = y[mask]
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
 
-#@jit(nopython=True, cache=True)
 def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
     M_r_t1 = M[r, :]
@@ -28,8 +26,8 @@ def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out
     M_t2_s = M[:, s]
 
     # remove r and s from the cols to avoid double counting
-
     # only keep non-zero entries to avoid unnecessary computation
+
     d0 = entropy_row_calc(M_r_row, d_in_new, d_out_new[r])
     d1 = entropy_row_calc(M_s_row, d_in_new, d_out_new[s])
     d2 = entropy_row_calc_ignore(M_r_col, d_out_new, d_in_new[r], r, s)
@@ -40,7 +38,6 @@ def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out
     d7 = entropy_row_calc_ignore(M_t2_s,  d_out, d_in[s], r, s)
     return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
 
-#@jit(cache=True)
 def compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the current block.
 
