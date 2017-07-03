@@ -192,7 +192,7 @@ def initialize_partition_variables():
     return optimal_B_found, old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B, graph_object
 
 
-def initialize_edge_counts(out_neighbors, B, b, use_sparse = False):
+def initialize_edge_counts(out_neighbors, B, b):
     """Initialize the edge count matrix and block degrees according to the current partition
 
         Parameters
@@ -204,8 +204,6 @@ def initialize_edge_counts(out_neighbors, B, b, use_sparse = False):
                     total number of blocks in the current partition
         b : ndarray (int)
                     array of block assignment for each node
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
 
         Returns
         -------
@@ -222,10 +220,7 @@ def initialize_edge_counts(out_neighbors, B, b, use_sparse = False):
         -----
         Compute the edge count matrix and the block degrees from scratch"""
 
-    if use_sparse: # store interblock edge counts as a sparse matrix
-        M = sparse.lil_matrix((B, B), dtype=int)
-    else:
-        M = np.zeros((B,B), dtype=int)
+    M = np.zeros((B,B), dtype=int)
 
     # compute the initial interblock edge count
     for v in range(len(out_neighbors)):
@@ -241,7 +236,7 @@ def initialize_edge_counts(out_neighbors, B, b, use_sparse = False):
     return M, d_out, d_in, d
 
 
-def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, use_sparse, n_proposals=10):
+def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, n_proposals=10):
     """Propose a new block assignment for the current node or block
 
         Parameters
@@ -262,8 +257,6 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
                     total number of blocks
         agg_move : bool
                     whether the proposal is a block move
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
 
         Returns
         -------
@@ -341,10 +334,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
         else:
             s = np.array([np.random.randint(B)])
     else:  # propose by random draw from neighbors of block partition[rand_neighbor]
-        if use_sparse:
-            multinomial_prob = (M[u, :].toarray().transpose() + M[:, u].toarray()) / float(d[u])
-        else:
-            multinomial_prob = (M[u, :].transpose() + M[:, u]) / float(d[u])
+        multinomial_prob = (M[u, :].transpose() + M[:, u]) / float(d[u])
         if agg_move:  # force proposal to be different from current block
             multinomial_prob[r] = 0
             if multinomial_prob.sum() == 0:  # the current block has no neighbors. randomly propose a different block
@@ -360,7 +350,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, use_sparse, debug=0):
+                                                       agg_move, debug=0):
 
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
@@ -397,7 +387,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix_vec(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, use_sparse, debug=0):
+                                                       agg_move, debug=0):
     """Compute the two new rows and cols of the edge count matrix under the proposal for the current node or block
 
         Parameters
@@ -420,8 +410,6 @@ def compute_new_rows_cols_interblock_edge_count_matrix_vec(M, r, s, b_out, count
                     edge counts to self
         agg_move : bool
                     whether the proposal is a block move
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
 
         Returns
         -------
@@ -562,7 +550,7 @@ def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
 
 
 
-def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row, M_r_col, B, d, d_new, use_sparse):
+def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row, M_r_col, B, d, d_new):
     """Compute the Hastings correction for the proposed block from the current block
 
         Parameters
@@ -589,8 +577,6 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
                     total number of edges to and from each block
         d_new : ndarray (int)
                     new block degrees under the proposal
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
 
         Returns
         -------
@@ -626,16 +612,10 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
 
     t, idx = np.unique(np.append(b_out, b_in), return_inverse=True)  # find all the neighboring blocks
     count = np.bincount(idx, weights=np.append(count_out, count_in)).astype(int)  # count edges to neighboring blocks
-    if use_sparse:
-        M_t_s = M[t, s].toarray().ravel()
-        M_s_t = M[s, t].toarray().ravel()
-        M_r_row = M_r_row[t].toarray().ravel()
-        M_r_col = M_r_col[t].toarray().ravel()
-    else:
-        M_t_s = M[t, s]
-        M_s_t = M[s, t]
-        M_r_row = M_r_row[t]
-        M_r_col = M_r_col[t]
+    M_t_s = M[t, s]
+    M_s_t = M[s, t]
+    M_r_row = M_r_row[t]
+    M_r_col = M_r_col[t]
         
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
@@ -686,7 +666,7 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_
     return b, B
 
 
-def update_partition(b, ni, r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out_new, d_in_new, d_new, use_sparse):
+def update_partition(b, ni, r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out_new, d_in_new, d_new):
     """Move the current node to the proposed block and update the edge counts
 
         Parameters
@@ -715,9 +695,6 @@ def update_partition(b, ni, r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out_n
                     the new in degree of each block under proposal
         d_new : ndarray (int)
                     the new total degree of each block under proposal
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
-
         Returns
         -------
         b : ndarray (int)
@@ -733,17 +710,13 @@ def update_partition(b, ni, r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out_n
     b[ni] = s
     M[r, :] = M_r_row
     M[s, :] = M_s_row
-    if use_sparse:
-        M[:, r] = M_r_col
-        M[:, s] = M_s_col
-    else:
-        M[:, r] = M_r_col.reshape(M[:, r].shape)
-        M[:, s] = M_s_col.reshape(M[:, s].shape)
+    M[:, r] = M_r_col.reshape(M[:, r].shape)
+    M[:, s] = M_s_col.reshape(M[:, s].shape)
 
     return b, M, d_out_new, d_in_new, d_new
 
 
-def compute_overall_entropy(M, d_out, d_in, B, N, E, use_sparse):
+def compute_overall_entropy(M, d_out, d_in, B, N, E):
     """Compute the overall entropy, including the model entropy as well as the data entropy, on the current partition.
        The best partition with an optimal number of blocks will minimize this entropy.
 
@@ -761,8 +734,6 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E, use_sparse):
                     number of nodes in the graph
         E : int
                     number of edges in the graph
-        use_sparse : bool
-                    whether the edge count matrix is stored as a sparse matrix
 
         Returns
         -------
@@ -785,9 +756,6 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E, use_sparse):
 
     nonzeros = M.nonzero()  # all non-zero entries
     edge_count_entries = M[nonzeros[0], nonzeros[1]]
-    if use_sparse:
-        edge_count_entries = edge_count_entries.toarray()
-
     entries = edge_count_entries * np.log(edge_count_entries / (d_out[nonzeros[0]] * d_in[nonzeros[1]]).astype(float))
     data_S = -np.sum(entries)
     model_S_term = B**2 / float(E)

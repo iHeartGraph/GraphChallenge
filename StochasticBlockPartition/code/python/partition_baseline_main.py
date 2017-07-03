@@ -11,6 +11,7 @@ import traceback
 import numpy.random
 import scipy.stats
 from compute_delta_entropy import compute_delta_entropy
+from numba import jit
 
 import random
 def random_permutation(iterable, r=None):
@@ -83,7 +84,7 @@ def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block
             proposals, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
                 current_block,
                 out_blocks, in_blocks, block_partition, M, block_degrees, num_blocks,
-                agg_move = 1, use_sparse = 0,
+                agg_move = 1,
                 n_proposals = n_proposal)
         else:
             proposals = np.empty(n_proposal, dtype=int)
@@ -92,7 +93,7 @@ def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block
             s, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
                 current_block,
                 out_blocks, in_blocks, block_partition, M, block_degrees, num_blocks,
-                agg_move = 1, use_sparse = 0,
+                agg_move = 1,
                 n_proposals = 1)
 
             s = int(s)
@@ -104,12 +105,9 @@ def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block
                                                     out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0],
                                                     in_blocks[:, 1],
                                                     M[current_block, current_block],
-                                                    agg_move = 1, use_sparse = 0, debug = 0)
-
-            n_proposals_evaluated += 1 #len(proposal)
+                                                    agg_move = 1, debug = 0)
 
             # compute change in entropy / posterior
-
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,
                                             s,
@@ -132,6 +130,7 @@ def compute_best_merge_and_entropy(blocks, num_blocks, M, block_partition, block
 
         mi = np.argmin(delta_entropy)
         best_entropy = delta_entropy[mi]
+        n_proposals_evaluated += n_proposal
 
         if best_entropy < best_overall_delta_entropy[current_block_idx]:
             best_overall_merge[current_block_idx] = proposals[mi]
@@ -224,7 +223,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
     proposal, num_out_neighbor_edges, num_in_neighbor_edges, num_neighbor_edges = propose_new_partition(
         current_block,
         out_neighbors[current_node], in_neighbors[current_node], partition,
-        interblock_edge_count, block_degrees, num_blocks, 0, use_sparse = 0, n_proposals=1)
+        interblock_edge_count, block_degrees, num_blocks, agg_move = 0, n_proposals=1)
 
     proposal = int(proposal)
 
@@ -252,7 +251,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
         new_interblock_edge_count_current_block_row, new_interblock_edge_count_new_block_row, new_interblock_edge_count_current_block_col, new_interblock_edge_count_new_block_col = \
             compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
                                                                blocks_out, count_out, blocks_in, count_in,
-                                                               self_edge_weight, 0, use_sparse = 0)
+                                                               self_edge_weight, 0)
 
         # compute new block degrees
         block_degrees_out_new, block_degrees_in_new, block_degrees_new = compute_new_block_degrees(
@@ -265,7 +264,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
                                                           new_interblock_edge_count_current_block_row,
                                                           new_interblock_edge_count_current_block_col,
                                                           num_blocks, block_degrees,
-                                                          block_degrees_new, use_sparse = 0)
+                                                          block_degrees_new)
 
         # compute change in entropy / posterior
         delta_entropy = compute_delta_entropy(current_block, proposal, interblock_edge_count,
@@ -417,7 +416,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
                                 compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                                    blocks_out, count_out, blocks_in, count_in,
-                                                                                   self_edge_weight, agg_move = 0, use_sparse = 0)
+                                                                                   self_edge_weight, agg_move = 0)
 
             partition, M = update_partition_single(partition, ni, proposal, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -604,7 +603,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                                         compute_new_rows_cols_interblock_edge_count_matrix(
                                             M, current_block, proposal,
                                             blocks_out, count_out, blocks_in, count_in,
-                                            self_edge_weight, agg_move = 0, use_sparse = 0)
+                                            self_edge_weight, agg_move = 0)
 
                     partition, M = update_partition_single(partition, ni, proposal, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -750,11 +749,10 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         # re-initialize edge counts and block degrees
         M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = initialize_edge_counts(out_neighbors,
                                                                                                num_blocks_t,
-                                                                                               partition_t,
-                                                                                               use_sparse = 0)
+                                                                                               partition_t)
         # compute the global entropy for MCMC convergence criterion
         overall_entropy = compute_overall_entropy(M_t, block_degrees_out_t, block_degrees_in_t, num_blocks_t, N,
-                                                  E, use_sparse = 0)
+                                                  E)
 
         overall_entropy_per_num_blocks[i] = overall_entropy
         state_per_num_blocks[i] = (overall_entropy, partition_t, num_blocks_t, M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t)
@@ -801,7 +799,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
 
     # compute the global entropy for determining the optimal number of blocks
     overall_entropy = compute_overall_entropy(M, block_degrees_out, block_degrees_in, num_blocks, N,
-                                              E, use_sparse = 0)
+                                              E)
 
     if verbose:
         t_end = timeit.default_timer()
@@ -844,8 +842,6 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, verbose = False):
 
     # partition update parameters
     args.beta = 3  # exploitation versus exploration (higher value favors exploitation)
-    use_sparse_matrix = False  # whether to represent the edge count matrix using sparse matrix
-                               # Scipy's sparse matrix is slow but this may be necessary for large graphs
 
     # agglomerative partition update parameters
     num_agg_proposals_per_block = 10  # number of proposals per block
@@ -860,10 +856,10 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, verbose = False):
 
     # initialize edge counts and block degrees
 
-    interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees = initialize_edge_counts(out_neighbors,
-                                                                                                       num_blocks,
-                                                                                                       partition,
-                                                                                                       use_sparse = 0)
+    interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
+        = initialize_edge_counts(out_neighbors,
+                                 num_blocks,
+                                 partition)
 
     # initialize items before iterations to find the partition with the optimal number of blocks
     optimal_num_blocks_found, old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks, graph_object = initialize_partition_variables()
@@ -967,7 +963,7 @@ def merge_partitions(M, block_degrees_out, block_degrees_in, block_degrees, part
             new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col \
                 = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                     out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0], in_blocks[:, 1],
-                                    M[current_block, current_block], agg_move = 1, use_sparse = 0, debug = 0)
+                                    M[current_block, current_block], agg_move = 1, debug = 0)
 
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,
