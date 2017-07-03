@@ -361,6 +361,43 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
                                                        agg_move, use_sparse, debug=0):
+
+    B = M.shape[0]
+    if agg_move:  # the r row and column are simply empty after this merge move
+        M_r_row = np.zeros(B, dtype=int)
+        M_r_col = np.zeros(B, dtype=int)
+    else:
+        M_r_row = M[r, :].copy()
+        M_r_col = M[:, r].copy()
+
+        M_r_row[b_out] -= count_out
+        M_r_row[r] -= np.sum(count_in[np.where(b_in == r)])
+        M_r_row[s] += np.sum(count_in[np.where(b_in == r)])
+        M_r_col[b_in] -= count_in
+        M_r_col[r] -= np.sum(count_out[np.where(b_out == r)])
+        M_r_col[s] += np.sum(count_out[np.where(b_out == r)])
+
+    M_s_row = M[s, :].copy()
+    M_s_col = M[:, s].copy()
+    M_s_row = M[s, :].copy()
+    M_s_col = M[:, s].copy()
+
+    M_s_row[b_out] += count_out
+    M_s_row[r] -= np.sum(count_in[np.where(b_in == s)])
+    M_s_row[s] += np.sum(count_in[np.where(b_in == s)])
+    M_s_row[r] -= count_self
+    M_s_row[s] += count_self
+    M_s_col[b_in] += count_in
+    M_s_col[r] -= np.sum(count_out[np.where(b_out == s)])
+    M_s_col[s] += np.sum(count_out[np.where(b_out == s)])
+    M_s_col[r] -= count_self
+    M_s_col[s] += count_self
+
+    return M_r_row, M_s_row, M_r_col, M_s_col
+
+
+def compute_new_rows_cols_interblock_edge_count_matrix_vec(M, r, s, b_out, count_out, b_in, count_in, count_self,
+                                                       agg_move, use_sparse, debug=0):
     """Compute the two new rows and cols of the edge count matrix under the proposal for the current node or block
 
         Parameters
@@ -493,7 +530,7 @@ def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
         -----
         The updates only involve changing the degrees of the current and proposed block"""
 
-    if 0:
+    if 1:
         new = []
         for old, degree in zip([d_out, d_in, d], [k_out, k_in, k]):
             new_d = old.copy()
@@ -597,8 +634,8 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
     else:
         M_t_s = M[t, s]
         M_s_t = M[s, t]
-        M_r_row = M_r_row[0, t].ravel()
-        M_r_col = M_r_col[t, 0].ravel()
+        M_r_row = M_r_row[t]
+        M_r_col = M_r_col[t]
         
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
     p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))

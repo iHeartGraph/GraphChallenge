@@ -1,18 +1,25 @@
+#from numba import jit
+
 import numpy as np
-import pickle
 
-def entropy_row_calc(x, y, c, ignore=()):
-    if 1:
-        mask = (x != 0)
-        for i in ignore:
-            mask[i] = 0
-    else:
-        mask = [i for i in (set(np.flatnonzero(x)) - set(ignore))]
-
+#@jit(nopython=True, cache=True)
+def entropy_row_calc(x, y, c):
+    mask = x.nonzero()[0]
     xm = x[mask]
     ym = y[mask]
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
 
+#@jit(nopython=True, cache=True)
+def entropy_row_calc_ignore(x, y, c, r, s):
+    #mask = [i for i in x.nonzero()[0] if i != r and i != s]
+    mask = (x != 0)
+    mask[r] = 0
+    mask[s] = 0
+    xm = x[mask]
+    ym = y[mask]
+    return np.sum(xm * (np.log(xm) - np.log(ym * c)))
+
+#@jit(nopython=True, cache=True)
 def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
     M_r_t1 = M[r, :]
@@ -21,19 +28,19 @@ def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out
     M_t2_s = M[:, s]
 
     # remove r and s from the cols to avoid double counting
-    ignore = (int(r), int(s))
 
     # only keep non-zero entries to avoid unnecessary computation
-    d0 = entropy_row_calc(M_r_row.ravel(), d_in_new, d_out_new[r])
-    d1 = entropy_row_calc(M_s_row.ravel(), d_in_new, d_out_new[s])
-    d2 = entropy_row_calc(M_r_col.ravel(), d_out_new, d_in_new[r], ignore)
-    d3 = entropy_row_calc(M_s_col.ravel(), d_out_new, d_in_new[s], ignore)
-    d4 = entropy_row_calc(M_r_t1.ravel(),  d_in, d_out[r])
-    d5 = entropy_row_calc(M_s_t1.ravel(),  d_in, d_out[s])
-    d6 = entropy_row_calc(M_t2_r.ravel(),  d_out, d_in[r], ignore)
-    d7 = entropy_row_calc(M_t2_s.ravel(),  d_out, d_in[s], ignore)
+    d0 = entropy_row_calc(M_r_row, d_in_new, d_out_new[r])
+    d1 = entropy_row_calc(M_s_row, d_in_new, d_out_new[s])
+    d2 = entropy_row_calc_ignore(M_r_col, d_out_new, d_in_new[r], r, s)
+    d3 = entropy_row_calc_ignore(M_s_col, d_out_new, d_in_new[s], r, s)
+    d4 = entropy_row_calc(M_r_t1,  d_in, d_out[r])
+    d5 = entropy_row_calc(M_s_t1,  d_in, d_out[s])
+    d6 = entropy_row_calc_ignore(M_t2_r,  d_out, d_in[r], r, s)
+    d7 = entropy_row_calc_ignore(M_t2_s,  d_out, d_in[s], r, s)
     return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
 
+#@jit(cache=True)
 def compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the current block.
 
@@ -142,9 +149,13 @@ def compute_delta_entropy_verify(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_
 compute_delta_entropy = compute_delta_entropy_alt
 
 if __name__ == '__main__':
-    import sys
+    import sys, pickle, timeit
     for fname in sys.argv[1:]:
         with open(fname, "rb") as f:
             (r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new) = pickle.load(f)
-            delta_entropy = compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
-            print("%s: delta_entropy = %s" % (fname, delta_entropy))
+            t0 = timeit.default_timer()
+            for i in range(10000):
+                delta_entropy = compute_delta_entropy(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
+            t1 = timeit.default_timer()
+            dt = t1 - t0
+            print("%s: %3.4f sec delta_entropy = %s" % (fname, dt, delta_entropy))
