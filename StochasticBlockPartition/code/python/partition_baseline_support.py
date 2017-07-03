@@ -350,7 +350,7 @@ def propose_new_partition(r, neighbors_out, neighbors_in, b, M, d, B, agg_move, 
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, debug=0):
+                                                       agg_move):
 
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
@@ -360,26 +360,32 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_r_row = M[r, :].copy()
         M_r_col = M[:, r].copy()
 
+        where_b_in_r = np.where(b_in == r)
+        where_b_out_r = np.where(b_out == r)
+
         M_r_row[b_out] -= count_out
-        M_r_row[r] -= np.sum(count_in[np.where(b_in == r)])
-        M_r_row[s] += np.sum(count_in[np.where(b_in == r)])
+        M_r_row[r] -= np.sum(count_in[where_b_in_r])
+        M_r_row[s] += np.sum(count_in[where_b_in_r])
         M_r_col[b_in] -= count_in
-        M_r_col[r] -= np.sum(count_out[np.where(b_out == r)])
-        M_r_col[s] += np.sum(count_out[np.where(b_out == r)])
+        M_r_col[r] -= np.sum(count_out[where_b_out_r])
+        M_r_col[s] += np.sum(count_out[where_b_out_r])
 
     M_s_row = M[s, :].copy()
     M_s_col = M[:, s].copy()
     M_s_row = M[s, :].copy()
     M_s_col = M[:, s].copy()
+
+    where_b_in_s = np.where(b_in == s)
+    where_b_out_s = np.where(b_out == s)
 
     M_s_row[b_out] += count_out
-    M_s_row[r] -= np.sum(count_in[np.where(b_in == s)])
-    M_s_row[s] += np.sum(count_in[np.where(b_in == s)])
+    M_s_row[r] -= np.sum(count_in[where_b_in_s])
+    M_s_row[s] += np.sum(count_in[where_b_in_s])
     M_s_row[r] -= count_self
     M_s_row[s] += count_self
     M_s_col[b_in] += count_in
-    M_s_col[r] -= np.sum(count_out[np.where(b_out == s)])
-    M_s_col[s] += np.sum(count_out[np.where(b_out == s)])
+    M_s_col[r] -= np.sum(count_out[where_b_out_s])
+    M_s_col[s] += np.sum(count_out[where_b_out_s])
     M_s_col[r] -= count_self
     M_s_col[s] += count_self
 
