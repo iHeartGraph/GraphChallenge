@@ -16,6 +16,7 @@ import sys
 from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
+from fast_sparse_array import fast_sparse_array
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -161,8 +162,6 @@ def initialize_partition_variables():
 
         Returns
         -------
-        optimal_B_found : bool
-                    flag for whether the optimal block has been found
         old_b : list of length 3
                     holds the best three partitions so far
         old_M : list of length 3
@@ -180,7 +179,6 @@ def initialize_partition_variables():
         graph_object : list
                     empty for now and will store the graph object if graphs will be visualized"""
 
-    optimal_B_found = False
     old_b = [[], [], []]  # partition for the high, best, and low number of blocks so far
     old_M = [[], [], []]  # edge count matrix for the high, best, and low number of blocks so far
     old_d = [[], [], []]  # block degrees for the high, best, and low number of blocks so far
@@ -189,7 +187,8 @@ def initialize_partition_variables():
     old_S = [np.Inf, np.Inf, np.Inf] # overall entropy for the high, best, and low number of blocks so far
     old_B = [[], [], []]  # number of blocks for the high, best, and low number of blocks so far
     graph_object = None
-    return optimal_B_found, old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B, graph_object
+    hist = (old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B)
+    return hist, graph_object
 
 
 def initialize_edge_counts(out_neighbors, B, b):
@@ -220,6 +219,12 @@ def initialize_edge_counts(out_neighbors, B, b):
         -----
         Compute the edge count matrix and the block degrees from scratch"""
 
+    
+    # if B < 500:
+    #     M = np.zeros((B,B), dtype=int)
+    # else:
+    #     M = fast_sparse_array((B,B), dtype=int)
+    # print("Created M with type %s shape %s from B = %d" % (type(M),str(M.shape),B))
     M = np.zeros((B,B), dtype=int)
 
     # compute the initial interblock edge count
@@ -233,6 +238,9 @@ def initialize_edge_counts(out_neighbors, B, b):
     d_out = np.asarray(M.sum(axis=1)).ravel()
     d_in = np.asarray(M.sum(axis=0)).ravel()
     d = d_out + d_in
+
+    print("density(M) = %s" % (len(M.nonzero()[0]) / (M.shape[0] ** 2.)))
+
     return M, d_out, d_in, d
 
 
@@ -615,6 +623,11 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_
     counter = 0
 
     while num_merge < B_to_merge:
+        if counter == len(best_merges):
+            if verbose:
+                print("No more merges possible")
+            break
+
         mergeFrom = best_merges[counter]
         mergeTo = block_map[best_merge_for_each_block[best_merges[counter]]]
         counter += 1
@@ -624,11 +637,12 @@ def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_
             block_map[np.where(block_map == mergeFrom)] = mergeTo
             b[np.where(b == mergeFrom)] = mergeTo
             num_merge += 1
+
     remaining_blocks = np.unique(b)
     mapping = -np.ones(B, dtype=int)
     mapping[remaining_blocks] = np.arange(len(remaining_blocks))
     b = mapping[b]
-    B -= B_to_merge
+    B -= num_merge
     return b, B
 
 
@@ -730,8 +744,7 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E):
     return S
 
 
-def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, old_b, old_M, old_d, old_d_out, old_d_in,
-                                             old_S, old_B, B_rate):
+def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, hist, B_rate):
     """Checks to see whether the current partition has the optimal number of blocks. If not, the next number of blocks
        to try is determined and the intermediate variables prepared.
 
@@ -810,6 +823,7 @@ def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, old_b, 
         the bracket is narrowed to consecutive number of blocks where the middle one is identified as the optimal
         number of blocks."""
 
+    old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B = hist
     optimal_B_found = False
     B_to_merge = 0
 
@@ -858,7 +872,7 @@ def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, old_b, 
                 index = 0
             else:  # the lower segment in the bracket is bigger
                 index = 1
-            next_B_to_try = old_B[index + 1] + np.round((old_B[index] - old_B[index + 1]) * 0.618).astype(int)
+            next_B_to_try = old_B[index + 1] + np.round((old_B[index] - old_B[index + 1]) * 0.61803399).astype(int)
             B_to_merge = old_B[index] - next_B_to_try
             B = old_B[index]
             b = old_b[index].copy()
@@ -866,7 +880,9 @@ def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, old_b, 
             d = old_d[index].copy()
             d_out = old_d_out[index].copy()
             d_in = old_d_in[index].copy()
-    return b, M, d, d_out, d_in, B, B_to_merge, old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B, optimal_B_found
+
+    hist = old_b, old_M, old_d, old_d_out, old_d_in, old_S, old_B
+    return b, M, d, d_out, d_in, B, B_to_merge, hist, optimal_B_found
 
 
 def plot_graph_with_partition(out_neighbors, b, graph_object=None, pos=None):
