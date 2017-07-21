@@ -59,6 +59,7 @@ def compute_best_block_merge_wrapper(tup):
 
     return compute_best_block_merge(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in)
 
+
 def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degrees, n_proposal, block_degrees_out, block_degrees_in):
     best_overall_merge = [-1 for i in blocks]
     best_overall_delta_entropy = [np.Inf for i in blocks]
@@ -68,15 +69,16 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
         if current_block is None:
             break
 
-        ii = M[:, current_block].nonzero()[0]
-        oo = M[current_block, :].nonzero()[0]
+        in_idx, in_weight = nonzero_slice(M[:, current_block])
+        out_idx, out_weight = nonzero_slice(M[current_block, :])
 
-        in_blocks = np.vstack((ii, M[ii, current_block])).T
-        out_blocks = np.vstack((oo, M[current_block, oo])).T
-        block_neighbors = np.concatenate((out_blocks, in_blocks))
+        # Index of non-zero block entries and their associated weights
 
-        num_out_block_edges = sum(out_blocks[:,1])
-        num_in_block_edges = sum(in_blocks[:,1])
+        block_neighbors = np.concatenate((in_idx, out_idx))
+        block_neighbor_weights = np.concatenate((in_weight, out_weight))
+
+        num_out_block_edges = sum(out_weight)
+        num_in_block_edges = sum(in_weight)
         num_block_edges = num_out_block_edges + num_in_block_edges
 
         n_proposal = 10
@@ -89,10 +91,11 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
         for proposal_idx in range(n_proposal):
             s = propose_new_partition(
                 current_block,
-                block_neighbors, num_block_edges,
+                block_neighbors,
+                block_neighbor_weights,
+                num_block_edges,
                 block_partition, M, block_degrees, num_blocks,
-                agg_move = 1,
-                n_proposals = 1)
+                agg_move = 1)
 
             s = int(s)
             proposals[proposal_idx] = s
@@ -100,10 +103,11 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
             # compute the two new rows and columns of the interblock edge count matrix
             new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col \
                 = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, s,
-                                                    out_blocks[:, 0], out_blocks[:, 1],
-                                                    in_blocks[:, 0], in_blocks[:, 1],
+                                                    out_idx, out_weight,
+                                                    in_idx, in_weight,
                                                     M[current_block, current_block],
-                                                    agg_move = 1)
+                                                    agg_move = 1,
+                                                    sparse = args.sparse)
 
             # compute change in entropy / posterior
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
@@ -221,9 +225,11 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
     # propose a new block for this node
     proposal = propose_new_partition(
         current_block,
-        vertex_neighbors[current_node], vertex_num_neighbor_edges[current_node],
+        vertex_neighbors[current_node][:, 0],
+        vertex_neighbors[current_node][:, 1],
+        vertex_num_neighbor_edges[current_node],
         partition,
-        interblock_edge_count, block_degrees, num_blocks, agg_move = 0, n_proposals=1)
+        interblock_edge_count, block_degrees, num_blocks, agg_move = 0)
 
     num_out_neighbor_edges = vertex_num_out_neighbor_edges[current_node]
     num_in_neighbor_edges = vertex_num_in_neighbor_edges[current_node]
@@ -252,10 +258,10 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
         self_edge_weight = np.sum(out_neighbors[current_node][np.where(
             out_neighbors[current_node][:, 0] == current_node), 1])  # check if this node has a self edge
 
-        new_M_current_block_row, new_M_new_block_row, new_M_current_block_col, new_M_new_block_col = \
+        new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col = \
             compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
                                                                blocks_out, count_out, blocks_in, count_in,
-                                                               self_edge_weight, 0)
+                                                               self_edge_weight, agg_move = 0, sparse = args.sparse)
 
         # compute new block degrees
         block_degrees_out_new, block_degrees_in_new, block_degrees_new = compute_new_block_degrees(
@@ -265,19 +271,21 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
             num_neighbor_edges)
 
         # compute the Hastings correction
-        Hastings_correction = compute_Hastings_correction(blocks_out, count_out, blocks_in, count_in, proposal,
+        Hastings_correction = compute_Hastings_correction(blocks_out, count_out, blocks_in, count_in,
+                                                          current_block,
+                                                          proposal,
                                                           interblock_edge_count,
-                                                          new_M_current_block_row,
-                                                          new_M_current_block_col,
+                                                          new_M_r_row,
+                                                          new_M_r_col,
                                                           num_blocks, block_degrees,
                                                           block_degrees_new)
 
         # compute change in entropy / posterior
         delta_entropy = compute_delta_entropy(current_block, proposal, interblock_edge_count,
-                                              new_M_current_block_row,
-                                              new_M_new_block_row,
-                                              new_M_current_block_col,
-                                              new_M_new_block_col, block_degrees_out,
+                                              new_M_r_row,
+                                              new_M_s_row,
+                                              new_M_r_col,
+                                              new_M_s_col, block_degrees_out,
                                               block_degrees_in, block_degrees_out_new, block_degrees_in_new)
         # compute probability of acceptance
 
@@ -291,15 +299,36 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
 
     return current_node, current_block, int(proposal), delta_entropy, p_accept
 
-
+def coo_to_flat(x, size):
+    x_i, x_v = x
+    f = np.zeros(size)
+    f[x_i] = x_v
+    return f
 
 def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col):
     r = b[ni]
     b[ni] = s
-    M[r, :] = M_r_row
-    M[s, :] = M_s_row
-    M[:, r] = M_r_col
-    M[:, s] = M_s_col
+
+    if type(M_r_row) is tuple:
+        M[r, :] = coo_to_flat(M_r_row, M.shape[0])
+    else:
+        M[r, :] = M_r_row
+
+    if type(M_r_col) is tuple:
+        M[:, r] = coo_to_flat(M_r_col, M.shape[0])
+    else:
+        M[:, r] = M_r_col
+
+    if type(M_s_row) is tuple:
+        M[s, :] = coo_to_flat(M_s_row, M.shape[0])
+    else:
+        M[s, :] = M_s_row
+
+    if type(M_s_col) is tuple:
+        M[:, s] = coo_to_flat(M_s_col, M.shape[0])
+    else:
+        M[:, s] = M_s_col
+
     return b, M
 
 def shared_memory_copy(z):
@@ -385,7 +414,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
                                 compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                                    blocks_out, count_out, blocks_in, count_in,
-                                                                                   self_edge_weight, agg_move = 0)
+                                                                                   self_edge_weight, agg_move = 0, sparse = args.sparse)
 
             partition, M = update_partition_single(partition, ni, proposal, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -572,7 +601,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                                         compute_new_rows_cols_interblock_edge_count_matrix(
                                             M, current_block, proposal,
                                             blocks_out, count_out, blocks_in, count_in,
-                                            self_edge_weight, agg_move = 0)
+                                            self_edge_weight, agg_move = 0, sparse = args.sparse)
 
                     partition, M = update_partition_single(partition, ni, proposal, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -1246,6 +1275,7 @@ if __name__ == '__main__':
     parser.add_argument("-v", "--verbose", type=int, required=False, default=0)
     parser.add_argument("-b", "--node-move-update-batch-size", type=int, required=False, default=1)
     parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
+    parser.add_argument("--sparse", type=int, required=False, default=0)
     parser.add_argument("-s", "--sort", type=int, required=False, default=0)
     parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
     parser.add_argument("-m", "--merge-method", type=int, required=False, default=0)

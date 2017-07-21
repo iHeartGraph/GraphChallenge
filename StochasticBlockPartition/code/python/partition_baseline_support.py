@@ -9,7 +9,7 @@
         .. [3] Karrer, Brian, and Mark EJ Newman. 'Stochastic blockmodels and community structure in networks.'
                Physical Review E 83, no. 1 (2011): 016107."""
 import numpy as np
-from scipy import sparse as sparse
+import scipy.sparse
 import scipy.misc as misc
 from munkres import Munkres # for correctness evaluation
 import sys
@@ -21,6 +21,15 @@ from fast_sparse_array import fast_sparse_array
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
     import graph_tool.all as gt
+
+def assert_close(x, y, tol=1e-9):
+    if np.abs(x - y) > tol:
+        raise Exception("Equality assertion failed: %s %s" % (x,y))
+
+def nonzero_slice(A):
+    idx = A.nonzero()[0]
+    val = A[idx]
+    return idx,val
 
 import random
 def random_permutation(iterable, r=None):
@@ -219,13 +228,17 @@ def initialize_edge_counts(out_neighbors, B, b):
         -----
         Compute the edge count matrix and the block degrees from scratch"""
 
+    import time
+    print("Initialize edge counts")
+    t0 = time.time()
     
-    # if B < 500:
-    #     M = np.zeros((B,B), dtype=int)
-    # else:
-    #     M = fast_sparse_array((B,B), dtype=int)
-    # print("Created M with type %s shape %s from B = %d" % (type(M),str(M.shape),B))
+#    if B < 500:
+#        M = np.zeros((B,B), dtype=int)
+#    else:
+    #M = fast_sparse_array((B,B), dtype=int)
+    #print("Created M with type %s shape %s from B = %d" % (type(M),str(M.shape),B))
     M = np.zeros((B,B), dtype=int)
+    #M = scipy.sparse.lil_matrix((B,B))
 
     # compute the initial interblock edge count
     for v in range(len(out_neighbors)):
@@ -234,17 +247,22 @@ def initialize_edge_counts(out_neighbors, B, b):
             k2, inverse_idx = np.unique(b[out_neighbors[v][:, 0]], return_inverse=True)
             count = np.bincount(inverse_idx, weights=out_neighbors[v][:, 1]).astype(int)
             M[k1, k2] += count
+
     # compute initial block degrees
     d_out = np.asarray(M.sum(axis=1)).ravel()
     d_in = np.asarray(M.sum(axis=0)).ravel()
     d = d_out + d_in
 
+    #M.raise_exception = 1
     print("density(M) = %s" % (len(M.nonzero()[0]) / (M.shape[0] ** 2.)))
+
+    t1 = time.time()
+    print("dt",t1-t0)
 
     return M, d_out, d_in, d
 
 
-def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_proposals=1):
+def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, B, agg_move):
     """Propose a new block assignment for the current node or block
 
         Parameters
@@ -275,12 +293,12 @@ def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_pro
         a block. Otherwise, randomly selects a neighbor to block u and propose its block assignment. For block (agglomerative) moves,
         avoid proposing the current block."""
 
-    draws = n_proposals
     # xxx no neighbor available
     if n_neighbors == 0:
         return r
 
-    rand_neighbor = np.random.choice(neighbors[:,0], p=neighbors[:,1] / float(n_neighbors), size=draws)
+    rand_neighbor = np.random.choice(neighbors, p=neighbor_weights / float(n_neighbors))
+
     #rand_neighbor = np.random.choice(neighbors[:,0])
 
     u = b[rand_neighbor]
@@ -288,173 +306,309 @@ def propose_new_partition(r, neighbors, n_neighbors, b, M, d, B, agg_move, n_pro
     if np.random.uniform() <= B / (d[u].astype(float) + B):
         if agg_move:
             # force proposals to be different from current block via a random offset and modulo
-            s1 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
+            s1 = (r + 1 + np.random.randint(B - 1)) % B
         else:
-            s1 = np.random.randint(B, size=draws)
+            s1 = np.random.randint(B)
 
         return s1
     else:
         # proposals by random draw from neighbors of block partition[rand_neighbor]
-        multinomial_prob = (M[u, :].T + M[:, u]).ravel() / d[u].astype(float)
+        if 1:
+            Mu_row_i, Mu_row = nonzero_slice(M[u, :])
+            Mu_col_i, Mu_col = nonzero_slice(M[:, u])
+            multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
+            multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
+            if agg_move: # force proposal to be different from current block
+                multinomial_probs[ (multinomial_choices == r) ] = 0.0
 
-        if agg_move: # force proposal to be different from current block
-            multinomial_prob[r] = 0
+            if len(multinomial_choices) == 0:
+                # the current block has no neighbors. randomly propose a different block
+                s2 = (r + 1 + np.random.randint(B - 1)) % B
+            else:
+                multinomial_probs /= multinomial_probs.sum()
+                s2 = np.random.choice(multinomial_choices, p = multinomial_probs)
+                #c = multinomial_probs.cumsum(axis=0)
+                #print("constant",(np.abs(multinomial_probs[0] - multinomial_probs) < 1e-6).all())
+                #print("p,c=",multinomial_probs,c)
+                #u = np.random.uniform()
+                #s2i = np.argmax((u < c), axis=0)
+                #s2_new = multinomial_choices[s2i]
+                #print("s2=",s2)
 
-        nz = multinomial_prob.nonzero()[0]
+        if 0:
+            multinomial_prob = (M[u, :] + M[:, u]).astype(float) #/ d[u].astype(float)
 
-        if len(nz) == 0:
-            # the current block has no neighbors. randomly propose a different block
-            s2 = (r + 1 + np.random.randint(B - 1, size=draws)) % B
-        else:
-            multinomial_prob[nz] /= multinomial_prob[nz].sum()
-            #s2 = np.random.choice(nz, p = multinomial_prob[nz])
+            if agg_move: # force proposal to be different from current block
+                multinomial_prob[r] = 0
 
-            # numpy random.multinomial does not support multi-dimensional draws
-            c = multinomial_prob.cumsum(axis=0)
-            u = np.random.uniform(size=draws)
-            s2 = np.argmax((u < c), axis=0)
+            nz = multinomial_prob.nonzero()[0]
+
+            if len(nz) == 0:
+                # the current block has no neighbors. randomly propose a different block
+                s2 = (r + 1 + np.random.randint(B - 1)) % B
+            else:
+                multinomial_prob[nz] /= multinomial_prob[nz].sum()
+                # s2 = np.random.choice(nz, p = multinomial_prob[nz])
+
+                # numpy random.multinomial does not support multi-dimensional draws
+                c = multinomial_prob.cumsum(axis=0)
+                #u = np.random.uniform()
+                s2 = np.argmax((u < c), axis=0)
+
+                assert(s2 == s2_new)
 
         return s2
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move):
+                                                       agg_move, sparse):
 
+    verify_sparse = 0
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
-        M_r_row = np.zeros(B, dtype=int)
-        M_r_col = np.zeros(B, dtype=int)
+        if sparse:
+            M_r_row_i, M_r_row_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
+            M_r_col_i, M_r_col_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
+            new_M_r_row = (M_r_row_i, M_r_row_v)
+            new_M_r_col = (M_r_col_i, M_r_col_v)
+        else:
+            M_r_row = np.zeros(B, dtype=int)
+            M_r_col = np.zeros(B, dtype=int)
+            new_M_r_row = M_r_row
+            new_M_r_col = M_r_col
     else:
-        M_r_row = M[r, :].copy()
-        M_r_col = M[:, r].copy()
-
         where_b_in_r = np.where(b_in == r)
         where_b_out_r = np.where(b_out == r)
 
-        M_r_row[b_out] -= count_out
-        M_r_row[r] -= np.sum(count_in[where_b_in_r])
-        M_r_row[s] += np.sum(count_in[where_b_in_r])
-        M_r_col[b_in] -= count_in
-        M_r_col[r] -= np.sum(count_out[where_b_out_r])
-        M_r_col[s] += np.sum(count_out[where_b_out_r])
+        offset = np.sum(count_in[where_b_in_r])
 
-    M_s_row = M[s, :].copy()
-    M_s_col = M[:, s].copy()
-    M_s_row = M[s, :].copy()
-    M_s_col = M[:, s].copy()
+        if not sparse or verify_sparse:
+            M_r_row = M[r, :].copy()
+            M_r_row[b_out] -= count_out
+            M_r_row[r] -= offset
+            M_r_row[s] += offset
+            new_M_r_row = M_r_row
+
+        if sparse:
+            M_r_row_i, M_r_row_v = nonzero_slice(M[r, :])
+
+            M_r_row_in_b_out = np.in1d(M_r_row_i, b_out)
+            M_r_row_v[M_r_row_in_b_out] -= count_out
+
+            x = np.in1d(M_r_row_i, r)
+            M_r_row_v[x] -= offset
+
+            x = np.in1d(M_r_row_i, s)
+            if x.any():
+                M_r_row_v[x] += offset
+            else:
+                M_r_row_v = np.append(M_r_row_v, offset)
+                M_r_row_i = np.append(M_r_row_i, s)
+
+            # After modifying the entries, elements of the rows and columns may have become zero.
+            nz = (M_r_row_v != 0)
+            M_r_row_i = M_r_row_i[nz]
+            M_r_row_v = M_r_row_v[nz]
+            new_M_r_row = (M_r_row_i, M_r_row_v)
+
+            if verify_sparse:
+                L = np.argsort(M_r_row_i)
+                M_r_row_i = M_r_row_i[L]
+                M_r_row_v = M_r_row_v[L]
+                M_r_row_i_test, M_r_row_v_test = nonzero_slice(M_r_row)
+
+                if (M_r_row_i_test.shape != M_r_row_i.shape) or (M_r_row_i_test != M_r_row_i).any():
+                    print("r = %s s = %s" % (r, s))
+                    print("indices")
+                    print(M_r_row_i)
+                    print(M_r_row_i_test)
+                    print("values")
+                    print(M_r_row_v)
+                    print(M_r_row_v_test)
+                    print("")
+                    raise Exception("Array M_r_row mismatch encountered")
+
+        if not sparse or verify_sparse:
+            M_r_col = M[:, r].copy()
+            M_r_col[b_in] -= count_in
+            M_r_col[r] -= np.sum(count_out[where_b_out_r])
+            M_r_col[s] += np.sum(count_out[where_b_out_r])
+            new_M_r_col = M_r_col
+
+        if sparse:
+            M_r_col_i, M_r_col_v = nonzero_slice(M[:, r])
+
+            M_r_col_in_b_in = np.in1d(M_r_col_i, b_in)
+            b_in_in_M_r_col = np.in1d(b_in, M_r_col_i)
+
+            M_r_col_v[M_r_col_in_b_in] -= count_in[b_in_in_M_r_col]
+
+            x = np.in1d(M_r_col_i, r)
+            M_r_col_v[x] -= np.sum(count_out[where_b_out_r])
+
+            x = np.in1d(M_r_col_i, s)
+            if x.any():
+                M_r_col_v[x] += np.sum(count_out[where_b_out_r])
+            else:
+                M_r_col_v = np.append(M_r_col_v, np.sum(count_out[where_b_out_r]))
+                M_r_col_i = np.append(M_r_col_i, s)
+
+            # After modifying the entries, elements of the rows and columns may have become zero.
+            nz = (M_r_col_v != 0)
+            M_r_col_i = M_r_col_i[nz]
+            M_r_col_v = M_r_col_v[nz]
+            new_M_r_col = (M_r_col_i, M_r_col_v)
+
+            if verify_sparse:
+                L = np.argsort(M_r_col_i)
+                M_r_col_i = M_r_col_i[L]
+                M_r_col_v = M_r_col_v[L]
+                M_r_col_i_test, M_r_col_v_test = nonzero_slice(M_r_col)
+
+                if (M_r_col_i_test.shape != M_r_col_i.shape) or (M_r_col_i_test != M_r_col_i).any():
+                    print("r = %s s = %s" % (r, s))
+                    print("indices")
+                    print(M_r_col_i)
+                    print(M_r_col_i_test)
+                    print("values")
+                    print(M_r_col_v)
+                    print(M_r_col_v_test)
+                    print("")
+                    raise Exception("Array M_r_col mismatch encountered")
 
     where_b_in_s = np.where(b_in == s)
     where_b_out_s = np.where(b_out == s)
 
-    M_s_row[b_out] += count_out
-    M_s_row[r] -= np.sum(count_in[where_b_in_s])
-    M_s_row[s] += np.sum(count_in[where_b_in_s])
-    M_s_row[r] -= count_self
-    M_s_row[s] += count_self
-    M_s_col[b_in] += count_in
-    M_s_col[r] -= np.sum(count_out[where_b_out_s])
-    M_s_col[s] += np.sum(count_out[where_b_out_s])
-    M_s_col[r] -= count_self
-    M_s_col[s] += count_self
+    # Compute M_s_row
+    offset = np.sum(count_in[where_b_in_s]) + count_self
+    if not sparse or verify_sparse:
+        M_s_row = M[s, :].copy()
+        M_s_row[b_out] += count_out
+        M_s_row[r] -= offset
+        M_s_row[s] += offset
+        new_M_s_row = M_s_row
 
-    return M_r_row, M_s_row, M_r_col, M_s_col
+    if sparse:
+        M_s_row_i, M_s_row_v = nonzero_slice(M[s, :])
+        M_s_row_in_b_out = np.in1d(M_s_row_i, b_out)
+        b_out_in_M_s_row = np.in1d(b_out, M_s_row_i)
+
+        # xxx insert all the missing entries
+        if M_s_row_in_b_out.any():
+            M_s_row_v[M_s_row_in_b_out] += count_out[b_out_in_M_s_row]
+
+        M_s_row_i = np.append(M_s_row_i, b_out[~b_out_in_M_s_row])
+        M_s_row_v = np.append(M_s_row_v, count_out[~b_out_in_M_s_row])
+
+        x = np.in1d(M_s_row_i, r)
+        M_s_row_v[x] -= offset
+
+        x = np.in1d(M_s_row_i, s)
+
+        if x.any():
+            M_s_row_v[x] += offset
+        else:
+            M_s_row_i = np.append(M_s_row_i, s)
+            M_s_row_v = np.append(M_s_row_v, offset)
+
+        # After modifying the entries, elements of the rows and columns may have become zero.
+        nz = (M_s_row_v != 0)
+        M_s_row_i = M_s_row_i[nz]
+        M_s_row_v = M_s_row_v[nz]
+        new_M_s_row = (M_s_row_i, M_s_row_v)
+
+        if verify_sparse:
+            L = np.argsort(M_s_row_i)
+            M_s_row_i = M_s_row_i[L]
+            M_s_row_v = M_s_row_v[L]
+            M_s_row_i_test, M_s_row_v_test = nonzero_slice(M_s_row)
+
+            if (M_s_row_i_test.shape != M_s_row_i.shape) or (M_s_row_i_test != M_s_row_i).any():
+                print("s = %s adj=%s" % (s, offset))
+                print("count_out.shape", count_out.shape)
+                print("b_out.shape", b_out.shape)
+
+                print("M_s_row_in_b_out",M_s_row_in_b_out.astype(int))
+                print(M_s_row_i)
+
+                print("Indices (actual vs. expected):")
+                print(M_s_row_i)
+                print(M_s_row_i_test)
+
+                print("Values (actual vs. expected):")
+                print(M_s_row_v)
+                print(M_s_row_v_test)
+                print("")
+
+                raise Exception("Array M_s_row mismatch encountered")
+                assert((M_s_row_v_test == M_s_row_v).all())
+
+    # Compute M_s_col
+    offset = np.sum(count_out[where_b_out_s]) + count_self
+
+    if not sparse or verify_sparse:
+        M_s_col = M[:, s].copy()
+        M_s_col[b_in] += count_in
+        M_s_col[r] -= offset
+        M_s_col[s] += offset
+        new_M_s_col = M_s_col
+
+    if sparse:
+        M_s_col_i, M_s_col_v = nonzero_slice(M[:, s])
+        M_s_col_in_b_in = np.in1d(M_s_col_i, b_in)
+        b_in_in_M_s_col = np.in1d(b_in, M_s_col_i)
+
+        # xxx insert all the missing entries
+        if M_s_col_in_b_in.any():
+            M_s_col_v[M_s_col_in_b_in] += count_in[b_in_in_M_s_col]
+
+        M_s_col_i = np.append(M_s_col_i, b_in[~b_in_in_M_s_col])
+        M_s_col_v = np.append(M_s_col_v, count_in[~b_in_in_M_s_col])
+
+        x = np.in1d(M_s_col_i, r)
+        M_s_col_v[x] -= offset
+
+        x = np.in1d(M_s_col_i, s)
+        if x.any():
+            M_s_col_v[x] += offset
+        else:
+            M_s_col_i = np.append(M_s_col_i, s)
+            M_s_col_v = np.append(M_s_col_v, offset)
+
+        # After modifying the entries, elements of the rows and columns may have become zero.
+        nz = (M_s_col_v != 0)
+        M_s_col_i = M_s_col_i[nz]
+        M_s_col_v = M_s_col_v[nz]
+        new_M_s_col = (M_s_col_i, M_s_col_v)
+
+        if verify_sparse:
+            L = np.argsort(M_s_col_i)
+            M_s_col_i = M_s_col_i[L]
+            M_s_col_v = M_s_col_v[L]
+            M_s_col_i_test, M_s_col_v_test = nonzero_slice(M_s_col)
+
+            if (M_s_col_i_test.shape != M_s_col_i.shape) or (M_s_col_i_test != M_s_col_i).any():
+                print("r = %s s = %s adj=%s" % (r, s, offset))
+                print("count_in.shape", count_in.shape)
+                print("b_in.shape", b_in.shape)
+                print("b_in=",b_in)
+                print("")
+                print("M_s_col_in_b_in", M_s_col_in_b_in.astype(int))
+                print(M_s_col_i)
+                print("")
+                print("Indices (actual vs. expected):")
+                print(M_s_col_i)
+                print(M_s_col_i_test)
+                print("")
+                print("Values (actual vs. expected):")
+                print(M_s_col_v)
+                print(M_s_col_v_test)
+                print("")
+
+                raise Exception("Array M_s_col mismatch encountered")
 
 
-def compute_new_rows_cols_interblock_edge_count_matrix_vec(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, debug=0):
-    """Compute the two new rows and cols of the edge count matrix under the proposal for the current node or block
-
-        Parameters
-        ----------
-        M : ndarray or sparse matrix (int), shape = (#blocks, #blocks)
-                    edge count matrix between all the blocks.
-        r : int
-                    current block assignment for the node under consideration
-        s : int
-                    proposed block assignment for the node under consideration
-        b_out : ndarray (int)
-                    blocks of the out neighbors (of a vertex)
-        count_out : ndarray (int)
-                    edge counts to the out neighbor blocks
-        b_in : ndarray (int)
-                    blocks of the in neighbors (of a vertex)
-        count_in : ndarray (int)
-                    edge counts to the in neighbor blocks
-        count_self : int
-                    edge counts to self
-        agg_move : bool
-                    whether the proposal is a block move
-
-        Returns
-        -------
-        M_r_row : ndarray or sparse matrix (int)
-                    the current block row of the new edge count matrix under proposal
-        M_s_row : ndarray or sparse matrix (int)
-                    the proposed block row of the new edge count matrix under proposal
-        M_r_col : ndarray or sparse matrix (int)
-                    the current block col of the new edge count matrix under proposal
-        M_s_col : ndarray or sparse matrix (int)
-                    the proposed block col of the new edge count matrix under proposal
-
-        Notes
-        -----
-        The updates only involve changing the entries to and from the neighboring blocks"""
-
-    if 0:
-        print("sum(count_in), sum(count_out)", np.sum(count_in), np.sum(count_out))
-
-    B = M.shape[0]
-    if agg_move:  # the r row and column are simply empty after this merge move
-        M_r_row = np.zeros((1, B), dtype=int)
-        M_r_col = np.zeros((B, 1), dtype=int)
-    else:
-        M_r_row = M[r, :].copy().reshape(1, B)
-        M_r_col = M[:, r].copy().reshape(B, 1)
-
-        M_r_row[0, b_out] -= count_out
-        where_b_in_r = np.where(b_in == r)
-        
-        M_r_row[0, r] -= np.sum(count_in[where_b_in_r])
-        M_r_row[0, s] += np.sum(count_in[where_b_in_r])
-
-        M_r_col[b_in, 0] -= count_in.reshape(M_r_col[b_in, 0].shape)
-
-        where_b_out_r = np.where(b_out == r)
-        M_r_col[r, 0] -= np.sum(count_out[where_b_out_r])
-        M_r_col[s, 0] += np.sum(count_out[where_b_out_r])
-
-    M_s_row = M[s, :].copy()
-    M_s_col = M[:, s].copy()
-
-    M_s_row[:, b_out] += count_out
-
-    for i in range(len(s)):
-        where_b_in_s = np.where(b_in == s[i])
-        M_s_row[i, r]  -= np.sum(count_in[where_b_in_s])
-        M_s_row[i, s[i]] += np.sum(count_in[where_b_in_s])
-
-    M_s_row[:, r] -= count_self
-    for i in range(len(s)):
-        M_s_row[i, s[i]] += count_self
-
-    if 1:
-        # repeat count_in for each col
-        c_in = np.broadcast_to(count_in.T, M_s_col[b_in, :].T.shape).T
-        M_s_col[b_in, :] += c_in
-    else:
-        M_s_col[b_in, :] += count_in.reshape(M_s_col[b_in, :].shape)
-
-    for i in range(len(s)):
-        where_b_out_s = np.where(b_out == s[i])
-        M_s_col[r, i]  -= np.sum(count_out[where_b_out_s])
-        M_s_col[s[i], i] += np.sum(count_out[where_b_out_s])
-
-    M_s_col[r, :] -= count_self
-
-    for i in range(len(s)):
-        M_s_col[s[i], i] += count_self
-
-    return M_r_row, M_s_row, M_r_col, M_s_col
+    return new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col
 
 
 def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
@@ -524,7 +678,7 @@ def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
 
 
 
-def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row, M_r_col, B, d, d_new):
+def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_row, M_r_col, B, d, d_new):
     """Compute the Hastings correction for the proposed block from the current block
 
         Parameters
@@ -588,11 +742,45 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, s, M, M_r_row,
     count = np.bincount(idx, weights=np.append(count_out, count_in)).astype(int)  # count edges to neighboring blocks
     M_t_s = M[t, s]
     M_s_t = M[s, t]
-    M_r_row = M_r_row[t]
-    M_r_col = M_r_col[t]
-        
+
+    p_backward = 0.0
+
+    if type(M_r_row) is tuple:
+        M_r_row_i, M_r_row_v = M_r_row
+    else:
+        M_r_row_i, M_r_row_v = nonzero_slice(M_r_row)
+        # M_r_row = M_r_row[t]
+
+    if type(M_r_col) is tuple:
+        M_r_col_i, M_r_col_v = M_r_col
+    else:
+        M_r_col_i, M_r_col_v = nonzero_slice(M_r_col)
+
+    if type(M_r_row) is tuple:
+        in_t = np.in1d(M_r_row_i, t)
+        in_M_r_row = np.in1d(t, M_r_row_i)
+        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + float(B)))
+    else:
+        M_r_row = M_r_row[t]
+        p_backward += np.sum(count * M_r_row / (d_new[t] + float(B)))
+
+    if type(M_r_col) is tuple:
+        in_t = np.in1d(M_r_col_i, t)
+        in_M_r_col = np.in1d(t, M_r_col_i)
+        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + float(B)))
+    else:
+        M_r_col = M_r_col[t]
+        p_backward += np.sum(count * (M_r_col + 1) / (d_new[t] + float(B)))
+
+
     p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
-    p_backward = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
+
+    #p_backward_orig = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
+
+    if 0:
+        assert_close(p_backward, p_b, 1e-9)
+        assert_close(p_forward, p_f, 1e-9)
+
     return p_backward / p_forward
 
 def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_for_each_block, b, B, B_to_merge, verbose=False):
