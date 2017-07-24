@@ -31,6 +31,28 @@ def nonzero_slice(A):
     val = A[idx]
     return idx,val
 
+def coo_to_flat(x, size):
+    x_i, x_v = x
+    f = np.zeros(size)
+    f[x_i] = x_v
+    return f
+
+def is_sorted(x):
+    return len(x) == 1 or (x[1:] >= x[0:-1]).all()
+
+def is_in_sorted(needle, haystack):
+    # assert(is_sorted(haystack))
+    res = np.zeros(needle.shape, dtype=bool)
+    if len(haystack) == 0:
+        return res
+    loc = np.searchsorted(haystack, needle)
+    loc[(loc == len(haystack))] = len(haystack) - 1
+    res = (haystack[loc] == needle)
+    return res
+
+search_array = is_in_sorted
+
+
 import random
 def random_permutation(iterable, r=None):
     "Random selection from itertools.permutations(iterable, r)"
@@ -392,13 +414,13 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         if sparse:
             M_r_row_i, M_r_row_v = nonzero_slice(M[r, :])
 
-            M_r_row_in_b_out = np.in1d(M_r_row_i, b_out)
+            M_r_row_in_b_out = search_array(M_r_row_i, b_out)
             M_r_row_v[M_r_row_in_b_out] -= count_out
 
-            x = np.in1d(M_r_row_i, r)
+            x = search_array(M_r_row_i, np.array([r]))
             M_r_row_v[x] -= offset
 
-            x = np.in1d(M_r_row_i, s)
+            x = search_array(M_r_row_i, np.array([s]))
             if x.any():
                 M_r_row_v[x] += offset
             else:
@@ -438,15 +460,15 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         if sparse:
             M_r_col_i, M_r_col_v = nonzero_slice(M[:, r])
 
-            M_r_col_in_b_in = np.in1d(M_r_col_i, b_in)
-            b_in_in_M_r_col = np.in1d(b_in, M_r_col_i)
+            M_r_col_in_b_in = search_array(M_r_col_i, b_in)
+            b_in_in_M_r_col = search_array(b_in, M_r_col_i)
 
             M_r_col_v[M_r_col_in_b_in] -= count_in[b_in_in_M_r_col]
 
-            x = np.in1d(M_r_col_i, r)
+            x = search_array(M_r_col_i, np.array([r]))
             M_r_col_v[x] -= np.sum(count_out[where_b_out_r])
 
-            x = np.in1d(M_r_col_i, s)
+            x = search_array(M_r_col_i, np.array([s]))
             if x.any():
                 M_r_col_v[x] += np.sum(count_out[where_b_out_r])
             else:
@@ -490,8 +512,8 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
     if sparse:
         M_s_row_i, M_s_row_v = nonzero_slice(M[s, :])
-        M_s_row_in_b_out = np.in1d(M_s_row_i, b_out)
-        b_out_in_M_s_row = np.in1d(b_out, M_s_row_i)
+        M_s_row_in_b_out = search_array(M_s_row_i, b_out)
+        b_out_in_M_s_row = search_array(b_out, M_s_row_i)
 
         # xxx insert all the missing entries
         if M_s_row_in_b_out.any():
@@ -500,10 +522,10 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_s_row_i = np.append(M_s_row_i, b_out[~b_out_in_M_s_row])
         M_s_row_v = np.append(M_s_row_v, count_out[~b_out_in_M_s_row])
 
-        x = np.in1d(M_s_row_i, r)
+        x = search_array(M_s_row_i, np.array([r]))
         M_s_row_v[x] -= offset
 
-        x = np.in1d(M_s_row_i, s)
+        x = search_array(M_s_row_i, np.array([s]))
 
         if x.any():
             M_s_row_v[x] += offset
@@ -555,8 +577,8 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
     if sparse:
         M_s_col_i, M_s_col_v = nonzero_slice(M[:, s])
-        M_s_col_in_b_in = np.in1d(M_s_col_i, b_in)
-        b_in_in_M_s_col = np.in1d(b_in, M_s_col_i)
+        M_s_col_in_b_in = search_array(M_s_col_i, b_in)
+        b_in_in_M_s_col = search_array(b_in, M_s_col_i)
 
         # xxx insert all the missing entries
         if M_s_col_in_b_in.any():
@@ -565,10 +587,10 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_s_col_i = np.append(M_s_col_i, b_in[~b_in_in_M_s_col])
         M_s_col_v = np.append(M_s_col_v, count_in[~b_in_in_M_s_col])
 
-        x = np.in1d(M_s_col_i, r)
+        x = search_array(M_s_col_i, np.array([r]))
         M_s_col_v[x] -= offset
 
-        x = np.in1d(M_s_col_i, s)
+        x = search_array(M_s_col_i, np.array([s]))
         if x.any():
             M_s_col_v[x] += offset
         else:
@@ -677,7 +699,6 @@ def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
         return (d_outs, d_ins, ds)
 
 
-
 def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_row, M_r_col, B, d, d_new):
     """Compute the Hastings correction for the proposed block from the current block
 
@@ -740,8 +761,17 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
 
     t, idx = np.unique(np.append(b_out, b_in), return_inverse=True)  # find all the neighboring blocks
     count = np.bincount(idx, weights=np.append(count_out, count_in)).astype(int)  # count edges to neighboring blocks
-    M_t_s = M[t, s]
-    M_s_t = M[s, t]
+
+    if 0:
+        M_t_s = M[t, s]
+        M_s_t = M[s, t]
+    else:
+        t = np.sort(t)
+        # t is sorted, opportunity for speedup later.
+        M_s_row_i, M_s_row_v = nonzero_slice(M[s, :])
+        M_s_col_i, M_s_col_v = nonzero_slice(M[:, s])
+        M_t_s = coo_to_flat((M_s_col_i, M_s_col_v), M.shape[0])[t]
+        M_s_t = coo_to_flat((M_s_row_i, M_s_row_v), M.shape[0])[t]
 
     p_backward = 0.0
 
@@ -757,7 +787,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_r_col_i, M_r_col_v = nonzero_slice(M_r_col)
 
     if type(M_r_row) is tuple:
-        in_t = np.in1d(M_r_row_i, t)
+        in_t = search_array(M_r_row_i, t)
         in_M_r_row = np.in1d(t, M_r_row_i)
         p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + float(B)))
     else:
@@ -765,7 +795,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         p_backward += np.sum(count * M_r_row / (d_new[t] + float(B)))
 
     if type(M_r_col) is tuple:
-        in_t = np.in1d(M_r_col_i, t)
+        in_t = search_array(M_r_col_i, t)
         in_M_r_col = np.in1d(t, M_r_col_i)
         p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + float(B)))
     else:
@@ -773,7 +803,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         p_backward += np.sum(count * (M_r_col + 1) / (d_new[t] + float(B)))
 
 
-    p_forward = np.sum(count*(M_t_s + M_s_t + 1) / (d[t] + float(B)))
+    p_forward = np.sum(count * (M_t_s + M_s_t + 1) / (d[t] + float(B)))
 
     #p_backward_orig = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
 
