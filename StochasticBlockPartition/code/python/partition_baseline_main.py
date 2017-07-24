@@ -69,10 +69,9 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
         if current_block is None:
             break
 
+        # Index of non-zero block entries and their associated weights
         in_idx, in_weight = nonzero_slice(M[:, current_block])
         out_idx, out_weight = nonzero_slice(M[current_block, :])
-
-        # Index of non-zero block entries and their associated weights
 
         block_neighbors = np.concatenate((in_idx, out_idx))
         block_neighbor_weights = np.concatenate((in_weight, out_weight))
@@ -1060,23 +1059,26 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
 
     for r in range(B0):
         current_block = r + partition_offset_0
-        ii = M[:, current_block].nonzero()[0]
-        oo = M[current_block, :].nonzero()[0]
-        in_blocks = np.vstack((ii, M[ii, current_block])).T
-        out_blocks = np.vstack((oo, M[current_block, oo])).T
 
-        neighbors = np.concatenate((out_blocks, in_blocks))
-        num_out_neighbor_edges = sum(out_blocks[:,1])
-        num_in_neighbor_edges = sum(in_blocks[:,1])
-        num_neighbor_edges = num_out_neighbor_edges + num_in_neighbor_edges
+        # Index of non-zero block entries and their associated weights
+        in_idx, in_weight = nonzero_slice(M[:, current_block])
+        out_idx, out_weight = nonzero_slice(M[current_block, :])
+
+        block_neighbors = np.concatenate((in_idx, out_idx))
+        block_neighbor_weights = np.concatenate((in_weight, out_weight))
+
+        num_out_block_edges = sum(out_weight)
+        num_in_block_edges = sum(in_weight)
+        num_block_edges = num_out_block_edges + num_in_block_edges
 
         for s in range(B1):
             proposal = s + partition_offset_1
 
             new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col \
                 = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
-                                    out_blocks[:, 0], out_blocks[:, 1], in_blocks[:, 0], in_blocks[:, 1],
-                                    M[current_block, current_block], agg_move = 1)
+                                                                     out_idx, out_weight,
+                                                                     in_idx, in_weight,
+                                                                     M[current_block, current_block], agg_move = 1)
 
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,
@@ -1084,9 +1086,9 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
                                             block_degrees_out,
                                             block_degrees_in,
                                             block_degrees,
-                                            num_out_neighbor_edges,
-                                            num_in_neighbor_edges,
-                                            num_neighbor_edges)
+                                            num_out_block_edges,
+                                            num_in_block_edges,
+                                            num_block_edges)
 
             delta_entropy[r, s] = compute_delta_entropy(current_block, proposal, M,
                                                         new_M_r_row,
