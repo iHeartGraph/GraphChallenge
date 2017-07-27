@@ -420,12 +420,6 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             new_M_r_row = M_r_row
 
         if sparse:
-            M_r_row_d = defaultdict(int, M.take_dict(r, 0))
-            for k,v in zip(b_out,count_out):
-                M_r_row_d[k] -= v
-            M_r_row_d[r] -= offset
-            M_r_row_d[s] += offset
-
             M_r_row_i, M_r_row_v = take_nonzero(M, r, 0)
 
             M_r_row_in_b_out = search_array(M_r_row_i, b_out)
