@@ -1,9 +1,18 @@
 import numpy as np
-#from partition_baseline_support import nonzero_slice
 
-def nonzero_slice(A):
-    idx = A.nonzero()[0]
-    val = A[idx]
+def nonzero_slice(A, sort=True):
+    if type(A) is np.ndarray:
+        idx = A.nonzero()[0]
+        val = A[idx]
+    elif type(A) is list:
+        idx = np.array([k for (k,v) in A], dtype=int)
+        val = np.array([v for (k,v) in A], dtype=int)
+        if sort:
+            s = np.argsort(idx)
+            idx = idx[s]
+            val = val[s]
+    else:
+        raise Exception("Unknown array type for A (type %s) = %s" % (type(A), str(A)))
     return idx,val
 
 def entropy_row_calc(x, y, c):
@@ -45,26 +54,29 @@ def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out
     return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
 
 def entropy_row_nz(x, y, c):
-    if c == 0:
-        return 0.0
-
-    assert((x!=0).all())
-    assert((y!=0).all())
+    # if c == 0:
+    #     #print("Zero encountered but returning 0")
+    #     return 0.0
+    # if not (x>0).all():
+    #     print("Invalid x value encountered")
+    #     print("x", x)
+    # if not (y>0).all():
+    #     print("Invalid y value encountered")
+    #     print("y", y)
 
     S = np.sum(x * (np.log(x) - np.log(y * c)))
-
-    if c == 0:
-        print("Zero encountered but returning %s" % S)
-        #raise Exception("Zero encountered")
-
     return S
 
 def entropy_row_nz_ignore(x, y, c, x_nz, r, s):
-    if c == 0:
-        return 0.0
+    # if c == 0:
+    #     return 0.0
 
-    assert((x!=0).all())
-    assert((y!=0).all())
+    # if not (x>0).all():
+    #     print("Invalid x value encountered")
+    #     print("x", x)
+    # if not (y>0).all():
+    #     print("Invalid y value encountered")
+    #     print("y", y)
 
     mask = (x_nz != r) & (x_nz != s)
     xm = x[mask]

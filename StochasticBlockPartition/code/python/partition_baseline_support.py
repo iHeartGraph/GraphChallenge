@@ -16,7 +16,109 @@ import sys
 from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
+from collections import defaultdict
 from fast_sparse_array import fast_sparse_array
+from collections import Iterable
+
+star = slice(None, None, None)
+class fast_sparse_array():
+    def __init__(self, tup):
+        self.rows = [dict() for i in range(tup[0])]
+        self.cols = [dict() for i in range(tup[1])]
+        self.shape = tup
+        self.debug = 0
+        if self.debug:
+            self.M_ver = np.zeros(self.shape, dtype=int)
+        return
+    def __getitem__(self, idx):
+        #print("Inside __getitem__ %s" % (str(idx)))
+        if 0: #self.debug:
+            return self.M_ver.__getitem__(idx)
+
+        i,j = idx
+        if type(i) is slice and i == star:
+            L = [(k,v) for (k,v) in self.cols[j].items()]
+        elif type(j) is slice and j == star:
+            L = [(k,v) for (k,v) in self.rows[i].items()]
+        else:
+            if j in self.rows[i]:
+                L = self.rows[i][j]
+            else:
+                L = 0
+
+        if self.debug:
+            L0 = self.M_ver.__getitem__(idx)
+            if isinstance(L, Iterable):
+                nz = L0.nonzero()[0]
+                L_i = np.array([k for (k,v) in L])
+                L_v = np.array([v for (k,v) in L])
+                s = np.argsort(L_i)
+                L_i = L_i[s]
+                L_v = L_v[s]
+                assert(len(nz) == len(L))
+                assert((nz == L_i).all())
+                assert((L0[nz] == L_v).all())
+            else:
+                assert(L0 == L)
+
+        return L
+    def __setitem__(self, idx, val):
+        #print("Inside __setitem__ %s %s" % (str(idx), str(val)))
+        i,j = idx
+        if val == 0:
+            if i in self.rows[i]:
+                del self.rows[i][j]
+            if j in self.cols[j]:
+                del self.cols[j][i]
+            return
+        self.rows[i][j] = val
+        self.cols[j][i] = val
+        if self.debug:
+            self.M_ver.__setitem__(idx, val)
+            self.verify()
+    def set_row_nonzeros(self, idx, nz_idx, nz_vals):
+        self.rows[idx] = {k:v for (k,v) in zip(nz_idx, nz_vals)}
+        for k in range(self.shape[1]):
+            if idx in self.cols[k]:
+                del self.cols[k][idx]
+        for k,v in zip(nz_idx, nz_vals):
+            self.cols[k][idx] = v
+        if self.debug:
+            self.M_ver[idx, :] = np.zeros(self.M_ver.shape[1])
+            self.M_ver[idx, nz_idx] = nz_vals
+            self.verify()
+    def set_col_nonzeros(self, idx, nz_idx, nz_vals):
+        self.cols[idx] = {k:v for (k,v) in zip(nz_idx, nz_vals)}
+        for k in range(self.shape[0]):
+            if idx in self.rows[k]:
+                del self.rows[k][idx]
+        for k,v in zip(nz_idx, nz_vals):
+            self.rows[k][idx] = v
+        if self.debug:
+            self.M_ver[:, idx] = np.zeros(self.M_ver.shape[0])
+            self.M_ver[nz_idx, idx] = nz_vals
+            self.verify()
+    def __str__(self):
+        return str(self.M_ver)
+    def count_nonzero(self):
+        return sum(len(d) for d in self.rows)
+    def verify(self):
+        for i in range(self.shape[0]):
+            for j in range(self.shape[1]):
+                a = self.__getitem__((i,j))
+                b = self.M_ver.__getitem__((i,j))
+                if a != b:
+                    raise Exception("Mismatch at element (%d %d) and values (%d %d)" % (i,j,a,b))
+    def copy(self):
+        c = fast_sparse_array(self.shape)
+        if self.debug:
+            c.M_ver = self.M_ver.copy()
+        for i in range(c.shape[0]):
+            c.rows[i] = self.rows[i].copy()
+        for i in range(c.shape[1]):
+            c.cols[i] = self.cols[i].copy()
+        return c
+
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -26,9 +128,19 @@ def assert_close(x, y, tol=1e-9):
     if np.abs(x - y) > tol:
         raise Exception("Equality assertion failed: %s %s" % (x,y))
 
-def nonzero_slice(A):
-    idx = A.nonzero()[0]
-    val = A[idx]
+def nonzero_slice(A, sort=True):
+    if type(A) is np.ndarray:
+        idx = A.nonzero()[0]
+        val = A[idx]
+    elif type(A) is list:
+        idx = np.array([k for (k,v) in A], dtype=int)
+        val = np.array([v for (k,v) in A], dtype=int)
+        if sort:
+            s = np.argsort(idx)
+            idx = idx[s]
+            val = val[s]
+    else:
+        raise Exception("Unknown array type for A (type %s) = %s" % (type(A), str(A)))
     return idx,val
 
 def coo_to_flat(x, size):
@@ -41,7 +153,7 @@ def is_sorted(x):
     return len(x) == 1 or (x[1:] >= x[0:-1]).all()
 
 def is_in_sorted(needle, haystack):
-    # assert(is_sorted(haystack))
+    #assert(is_sorted(haystack))
     res = np.zeros(needle.shape, dtype=bool)
     if len(haystack) == 0:
         return res
@@ -50,7 +162,9 @@ def is_in_sorted(needle, haystack):
     res = (haystack[loc] == needle)
     return res
 
+
 search_array = is_in_sorted
+#search_array = np.in1d
 
 
 import random
@@ -222,7 +336,7 @@ def initialize_partition_variables():
     return hist, graph_object
 
 
-def initialize_edge_counts(out_neighbors, B, b):
+def initialize_edge_counts(out_neighbors, B, b, sparse):
     """Initialize the edge count matrix and block degrees according to the current partition
 
         Parameters
@@ -251,35 +365,45 @@ def initialize_edge_counts(out_neighbors, B, b):
         Compute the edge count matrix and the block degrees from scratch"""
 
     import time
-    print("Initialize edge counts")
+    print("Initialize edge counts for size %d" % (B))
     t0 = time.time()
-    
-#    if B < 500:
-#        M = np.zeros((B,B), dtype=int)
-#    else:
-    #M = fast_sparse_array((B,B), dtype=int)
-    #print("Created M with type %s shape %s from B = %d" % (type(M),str(M.shape),B))
-    M = np.zeros((B,B), dtype=int)
-    #M = scipy.sparse.lil_matrix((B,B))
 
-    # compute the initial interblock edge count
-    for v in range(len(out_neighbors)):
-        if len(out_neighbors[v]) > 0:
+    if not sparse:
+        M = np.zeros((B,B), dtype=int)
+        # compute the initial interblock edge count
+        for v in range(len(out_neighbors)):
             k1 = b[v]
-            k2, inverse_idx = np.unique(b[out_neighbors[v][:, 0]], return_inverse=True)
-            count = np.bincount(inverse_idx, weights=out_neighbors[v][:, 1]).astype(int)
-            M[k1, k2] += count
+            if len(out_neighbors[v]) > 0:
+                k2, inverse_idx = np.unique(b[out_neighbors[v][:, 0]], return_inverse=True)
+                count = np.bincount(inverse_idx, weights=out_neighbors[v][:, 1]).astype(int)
+                M[k1, k2] += count
 
-    # compute initial block degrees
-    d_out = np.asarray(M.sum(axis=1)).ravel()
-    d_in = np.asarray(M.sum(axis=0)).ravel()
-    d = d_out + d_in
-
-    #M.raise_exception = 1
-    print("density(M) = %s" % (len(M.nonzero()[0]) / (M.shape[0] ** 2.)))
+        # compute initial block degrees
+        d_out = np.asarray(M.sum(axis=1)).ravel()
+        d_in = np.asarray(M.sum(axis=0)).ravel()
+        d = d_out + d_in
+        print("density(M) = %s" % (len(M.nonzero()[0]) / (B ** 2.)))
+    else:
+        M = fast_sparse_array((B,B))
+        d_out = np.zeros(B, dtype=int)
+        d_in = np.zeros(B, dtype=int)
+        M_d = defaultdict(int)
+        for v in range(len(out_neighbors)):
+            k1 = b[v]
+            if len(out_neighbors[v]) > 0:
+                k2, inverse_idx = np.unique(b[out_neighbors[v][:, 0]], return_inverse=True)
+                count = np.bincount(inverse_idx, weights=out_neighbors[v][:, 1]).astype(int)
+                for k,c in zip(k2, count):
+                    M_d[(k1, k)] += c
+        for (i,j),w in M_d.items():
+            M[i,j] = w
+            d_in[j] += w
+            d_out[i] += w
+        d = d_out + d_in
 
     t1 = time.time()
-    print("dt",t1-t0)
+
+    print("M initialization took %s" % (t1-t0))
 
     return M, d_out, d_in, d
 
@@ -952,13 +1076,22 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E):
         
         where the function h(x)=(1+x)\ln(1+x) - x\ln(x) and the sum runs over all entries (t_1, t_2) in the edge count matrix"""
 
-    nonzeros = M.nonzero()  # all non-zero entries
-    edge_count_entries = M[nonzeros[0], nonzeros[1]]
-    entries = edge_count_entries * np.log(edge_count_entries / (d_out[nonzeros[0]] * d_in[nonzeros[1]]).astype(float))
-    data_S = -np.sum(entries)
+    if type(M) is not fast_sparse_array:
+        nonzeros = M.nonzero()
+        edge_count_entries = M[nonzeros]
+        entries = edge_count_entries * np.log(edge_count_entries / (d_out[nonzeros[0]] * d_in[nonzeros[1]]).astype(float))
+        data_S = -np.sum(entries)
+    else:
+        data_S = 0.0
+        for i in range(B):
+            M_row_i, M_row_v = nonzero_slice(M[i, :])
+            entries = M_row_v * np.log(M_row_v / (d_out[i] * d_in[M_row_i]).astype(float))
+            data_S += -np.sum(entries)
+
     model_S_term = B**2 / float(E)
     model_S = E * (1 + model_S_term) * np.log(1 + model_S_term) - model_S_term * np.log(model_S_term) + N*np.log(B)
     S = model_S + data_S
+
     return S
 
 

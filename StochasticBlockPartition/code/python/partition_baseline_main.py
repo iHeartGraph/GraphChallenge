@@ -280,12 +280,14 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
                                                           block_degrees_new)
 
         # compute change in entropy / posterior
-        delta_entropy = compute_delta_entropy(current_block, proposal, interblock_edge_count,
+        delta_entropy = compute_delta_entropy(current_block, proposal,
+                                              interblock_edge_count,
                                               new_M_r_row,
                                               new_M_s_row,
                                               new_M_r_col,
                                               new_M_s_col, block_degrees_out,
                                               block_degrees_in, block_degrees_out_new, block_degrees_in_new)
+
         # compute probability of acceptance
 
         # Clamp to avoid under- and overflow
@@ -307,6 +309,13 @@ def coo_to_flat(x, size):
 def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col):
     r = b[ni]
     b[ni] = s
+
+    if type(M) is fast_sparse_array:
+        M.set_row_nonzeros(r, M_r_row[0], M_r_row[1])
+        M.set_row_nonzeros(s, M_s_row[0], M_s_row[1])
+        M.set_col_nonzeros(r, M_r_col[0], M_r_col[1])
+        M.set_col_nonzeros(s, M_s_col[0], M_s_col[1])
+        return b, M
 
     if type(M_r_row) is tuple:
         M[r, :] = coo_to_flat(M_r_row, M.shape[0])
@@ -401,8 +410,8 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
 
             current_block = partition[ni]
 
-            if 0:
-                print("Move %s from block %s to block %s." % (ni, current_block, proposal))
+            if verbose > 2:
+                print("Move %5d from block %5d to block %5d." % (ni, current_block, proposal))
 
             blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
             count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
@@ -423,11 +432,25 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
 
             btime = timeit.default_timer()
-            where_modified = np.where(modified)
-            block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
-            block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
-            block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
+            where_modified = np.where(modified)[0]
 
+            if 0: #type(M) is not fast_sparse_array:
+                block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
+                block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
+            elif 1:
+                for w in where_modified:
+                    nz_i, nz_v = nonzero_slice(M[w, :])
+                    block_degrees_out[w] = np.sum(nz_v)
+                    nz_i, nz_v = nonzero_slice(M[:, w])
+                    block_degrees_in[w] = np.sum(nz_v)
+            elif 0:
+                for w in where_modified:
+                    nz_i, nz_v = nonzero_slice(M[w, :])
+                    block_degrees_out[w] = np.sum(nz_v)
+                    nz_i, nz_v = nonzero_slice(M[:, w])
+                    block_degrees_in[w] = np.sum(nz_v)
+
+            block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
             btime_end = timeit.default_timer()
             block_sum_time += btime_end - btime
             block_sum_time_cum += btime_end - btime
@@ -611,9 +634,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                 if num_nodal_moves >= next_batch_cnt or proposal_cnt == N:
                     btime = timeit.default_timer()
-                    where_modified = np.where(modified)
-                    block_degrees_out[where_modified] = np.sum(M[modified, :], axis = 1)
-                    block_degrees_in[where_modified] = np.sum(M[:, modified], axis = 0)
+                    where_modified = np.where(modified)[0]
+                    block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
+                    block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
                     block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
                     next_batch_cnt = num_nodal_moves + batch_size
 
@@ -743,7 +766,8 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         # re-initialize edge counts and block degrees
         M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = initialize_edge_counts(out_neighbors,
                                                                                                num_blocks_t,
-                                                                                               partition_t)
+                                                                                               partition_t,
+                                                                                               args.sparse)
         # compute the global entropy for MCMC convergence criterion
         overall_entropy = compute_overall_entropy(M_t, block_degrees_out_t, block_degrees_in_t, num_blocks_t, N,
                                                   E)
@@ -865,7 +889,8 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
         interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
             = initialize_edge_counts(out_neighbors,
                                      num_blocks,
-                                     partition)
+                                     partition,
+                                     args.sparse)
         # initialize items before iterations to find the partition with the optimal number of blocks
         hist, graph_object = initialize_partition_variables()
         num_blocks_to_merge = int(num_blocks * num_block_reduction_rate)
@@ -880,7 +905,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
             for partition in partition_bracket:
                 num_blocks = 1 + np.max(partition)
                 interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                    = initialize_edge_counts(out_neighbors, num_blocks, partition)
+                    = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse)
 
                 overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
 
@@ -896,7 +921,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
             partition = partition_bracket[0]
             num_blocks = 1 + np.max(partition)
             interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                = initialize_edge_counts(out_neighbors, num_blocks, partition)
+                = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse)
             overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
             
 
@@ -1023,7 +1048,7 @@ def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
         # Instead of relying on initialize_edge_counts.
 
         M, block_degrees_out, block_degrees_in, block_degrees \
-            = initialize_edge_counts(out_neighbors, B, partition)
+            = initialize_edge_counts(out_neighbors, B, partition, args.sparse)
 
         if args.verbose > 2:
             print("M.shape = %s, M = \n%s" % (str(M.shape),M))
