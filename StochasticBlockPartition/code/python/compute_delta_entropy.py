@@ -1,19 +1,5 @@
 import numpy as np
-
-def nonzero_slice(A, sort=True):
-    if type(A) is np.ndarray:
-        idx = A.nonzero()[0]
-        val = A[idx]
-    elif type(A) is list:
-        idx = np.array([k for (k,v) in A], dtype=int)
-        val = np.array([v for (k,v) in A], dtype=int)
-        if sort:
-            s = np.argsort(idx)
-            idx = idx[s]
-            val = val[s]
-    else:
-        raise Exception("Unknown array type for A (type %s) = %s" % (type(A), str(A)))
-    return idx,val
+from fast_sparse_array import nonzero_slice
 
 def entropy_row_calc(x, y, c):
     mask = x.nonzero()[0]
@@ -86,30 +72,30 @@ def entropy_row_nz_ignore(x, y, c, x_nz, r, s):
 
 def compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
-    M_r_t1_i, M_r_t1 = nonzero_slice(M[r, :])
-    M_s_t1_i, M_s_t1 = nonzero_slice(M[s, :])
-    M_t2_r_i, M_t2_r = nonzero_slice(M[:, r])
-    M_t2_s_i, M_t2_s = nonzero_slice(M[:, s])
+    M_r_t1_i, M_r_t1 = nonzero_slice(M[r, :], sort=False)
+    M_s_t1_i, M_s_t1 = nonzero_slice(M[s, :], sort=False)
+    M_t2_r_i, M_t2_r = nonzero_slice(M[:, r], sort=False)
+    M_t2_s_i, M_t2_s = nonzero_slice(M[:, s], sort=False)
 
     if type(M_r_row) is tuple:
         M_r_row_i, M_r_row = M_r_row
     else:
-        M_r_row_i, M_r_row = nonzero_slice(M_r_row)
+        M_r_row_i, M_r_row = nonzero_slice(M_r_row, sort=False)
 
     if type(M_r_col) is tuple:
         M_r_col_i, M_r_col = M_r_col
     else:
-        M_r_col_i, M_r_col = nonzero_slice(M_r_col)
+        M_r_col_i, M_r_col = nonzero_slice(M_r_col, sort=False)
 
     if type(M_s_row) is tuple:
         M_s_row_i, M_s_row = M_s_row
     else:
-        M_s_row_i, M_s_row = nonzero_slice(M_s_row)
+        M_s_row_i, M_s_row = nonzero_slice(M_s_row, sort=False)
 
     if type(M_s_col) is tuple:
         M_s_col_i, M_s_col = M_s_col
     else:
-        M_s_col_i, M_s_col = nonzero_slice(M_s_col)
+        M_s_col_i, M_s_col = nonzero_slice(M_s_col, sort=False)
 
 
     # remove r and s from the cols to avoid double counting

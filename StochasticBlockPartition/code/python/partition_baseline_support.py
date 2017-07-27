@@ -17,108 +17,8 @@ from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
-from fast_sparse_array import fast_sparse_array
+from fast_sparse_array import fast_sparse_array, nonzero_slice
 from collections import Iterable
-
-star = slice(None, None, None)
-class fast_sparse_array():
-    def __init__(self, tup):
-        self.rows = [dict() for i in range(tup[0])]
-        self.cols = [dict() for i in range(tup[1])]
-        self.shape = tup
-        self.debug = 0
-        if self.debug:
-            self.M_ver = np.zeros(self.shape, dtype=int)
-        return
-    def __getitem__(self, idx):
-        #print("Inside __getitem__ %s" % (str(idx)))
-        if 0: #self.debug:
-            return self.M_ver.__getitem__(idx)
-
-        i,j = idx
-        if type(i) is slice and i == star:
-            L = [(k,v) for (k,v) in self.cols[j].items()]
-        elif type(j) is slice and j == star:
-            L = [(k,v) for (k,v) in self.rows[i].items()]
-        else:
-            if j in self.rows[i]:
-                L = self.rows[i][j]
-            else:
-                L = 0
-
-        if self.debug:
-            L0 = self.M_ver.__getitem__(idx)
-            if isinstance(L, Iterable):
-                nz = L0.nonzero()[0]
-                L_i = np.array([k for (k,v) in L])
-                L_v = np.array([v for (k,v) in L])
-                s = np.argsort(L_i)
-                L_i = L_i[s]
-                L_v = L_v[s]
-                assert(len(nz) == len(L))
-                assert((nz == L_i).all())
-                assert((L0[nz] == L_v).all())
-            else:
-                assert(L0 == L)
-
-        return L
-    def __setitem__(self, idx, val):
-        #print("Inside __setitem__ %s %s" % (str(idx), str(val)))
-        i,j = idx
-        if val == 0:
-            if i in self.rows[i]:
-                del self.rows[i][j]
-            if j in self.cols[j]:
-                del self.cols[j][i]
-            return
-        self.rows[i][j] = val
-        self.cols[j][i] = val
-        if self.debug:
-            self.M_ver.__setitem__(idx, val)
-            self.verify()
-    def set_row_nonzeros(self, idx, nz_idx, nz_vals):
-        self.rows[idx] = {k:v for (k,v) in zip(nz_idx, nz_vals)}
-        for k in range(self.shape[1]):
-            if idx in self.cols[k]:
-                del self.cols[k][idx]
-        for k,v in zip(nz_idx, nz_vals):
-            self.cols[k][idx] = v
-        if self.debug:
-            self.M_ver[idx, :] = np.zeros(self.M_ver.shape[1])
-            self.M_ver[idx, nz_idx] = nz_vals
-            self.verify()
-    def set_col_nonzeros(self, idx, nz_idx, nz_vals):
-        self.cols[idx] = {k:v for (k,v) in zip(nz_idx, nz_vals)}
-        for k in range(self.shape[0]):
-            if idx in self.rows[k]:
-                del self.rows[k][idx]
-        for k,v in zip(nz_idx, nz_vals):
-            self.rows[k][idx] = v
-        if self.debug:
-            self.M_ver[:, idx] = np.zeros(self.M_ver.shape[0])
-            self.M_ver[nz_idx, idx] = nz_vals
-            self.verify()
-    def __str__(self):
-        return str(self.M_ver)
-    def count_nonzero(self):
-        return sum(len(d) for d in self.rows)
-    def verify(self):
-        for i in range(self.shape[0]):
-            for j in range(self.shape[1]):
-                a = self.__getitem__((i,j))
-                b = self.M_ver.__getitem__((i,j))
-                if a != b:
-                    raise Exception("Mismatch at element (%d %d) and values (%d %d)" % (i,j,a,b))
-    def copy(self):
-        c = fast_sparse_array(self.shape)
-        if self.debug:
-            c.M_ver = self.M_ver.copy()
-        for i in range(c.shape[0]):
-            c.rows[i] = self.rows[i].copy()
-        for i in range(c.shape[1]):
-            c.cols[i] = self.cols[i].copy()
-        return c
-
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -127,21 +27,6 @@ if use_graph_tool_options:
 def assert_close(x, y, tol=1e-9):
     if np.abs(x - y) > tol:
         raise Exception("Equality assertion failed: %s %s" % (x,y))
-
-def nonzero_slice(A, sort=True):
-    if type(A) is np.ndarray:
-        idx = A.nonzero()[0]
-        val = A[idx]
-    elif type(A) is list:
-        idx = np.array([k for (k,v) in A], dtype=int)
-        val = np.array([v for (k,v) in A], dtype=int)
-        if sort:
-            s = np.argsort(idx)
-            idx = idx[s]
-            val = val[s]
-    else:
-        raise Exception("Unknown array type for A (type %s) = %s" % (type(A), str(A)))
-    return idx,val
 
 def coo_to_flat(x, size):
     x_i, x_v = x
@@ -1084,7 +969,7 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E):
     else:
         data_S = 0.0
         for i in range(B):
-            M_row_i, M_row_v = nonzero_slice(M[i, :])
+            M_row_i, M_row_v = nonzero_slice(M[i, :], sort=False)
             entries = M_row_v * np.log(M_row_v / (d_out[i] * d_in[M_row_i]).astype(float))
             data_S += -np.sum(entries)
 
