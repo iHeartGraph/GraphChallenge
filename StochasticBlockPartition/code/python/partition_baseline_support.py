@@ -17,7 +17,7 @@ from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
-from fast_sparse_array import fast_sparse_array, nonzero_slice
+from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero
 from collections import Iterable
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
@@ -39,9 +39,8 @@ def is_sorted(x):
 
 def is_in_sorted(needle, haystack):
     #assert(is_sorted(haystack))
-    res = np.zeros(needle.shape, dtype=bool)
     if len(haystack) == 0:
-        return res
+        return True
     loc = np.searchsorted(haystack, needle)
     loc[(loc == len(haystack))] = len(haystack) - 1
     res = (haystack[loc] == needle)
@@ -345,8 +344,8 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
     else:
         # proposals by random draw from neighbors of block partition[rand_neighbor]
         if 1:
-            Mu_row_i, Mu_row = nonzero_slice(M[u, :])
-            Mu_col_i, Mu_col = nonzero_slice(M[:, u])
+            Mu_row_i, Mu_row = take_nonzero(M, u, 0)
+            Mu_col_i, Mu_col = take_nonzero(M, u, 1)
             multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
             multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
             if agg_move: # force proposal to be different from current block
@@ -421,7 +420,13 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             new_M_r_row = M_r_row
 
         if sparse:
-            M_r_row_i, M_r_row_v = nonzero_slice(M[r, :])
+            M_r_row_d = defaultdict(int, M.take_dict(r, 0))
+            for k,v in zip(b_out,count_out):
+                M_r_row_d[k] -= v
+            M_r_row_d[r] -= offset
+            M_r_row_d[s] += offset
+
+            M_r_row_i, M_r_row_v = take_nonzero(M, r, 0)
 
             M_r_row_in_b_out = search_array(M_r_row_i, b_out)
             M_r_row_v[M_r_row_in_b_out] -= count_out
@@ -467,7 +472,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             new_M_r_col = M_r_col
 
         if sparse:
-            M_r_col_i, M_r_col_v = nonzero_slice(M[:, r])
+            M_r_col_i, M_r_col_v = take_nonzero(M, r, 1)
 
             M_r_col_in_b_in = search_array(M_r_col_i, b_in)
             b_in_in_M_r_col = search_array(b_in, M_r_col_i)
@@ -520,7 +525,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         new_M_s_row = M_s_row
 
     if sparse:
-        M_s_row_i, M_s_row_v = nonzero_slice(M[s, :])
+        M_s_row_i, M_s_row_v = take_nonzero(M, s, 0)
         M_s_row_in_b_out = search_array(M_s_row_i, b_out)
         b_out_in_M_s_row = search_array(b_out, M_s_row_i)
 
@@ -585,7 +590,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         new_M_s_col = M_s_col
 
     if sparse:
-        M_s_col_i, M_s_col_v = nonzero_slice(M[:, s])
+        M_s_col_i, M_s_col_v = take_nonzero(M, s, 1)
         M_s_col_in_b_in = search_array(M_s_col_i, b_in)
         b_in_in_M_s_col = search_array(b_in, M_s_col_i)
 
@@ -777,8 +782,8 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
     else:
         t = np.sort(t)
         # t is sorted, opportunity for speedup later.
-        M_s_row_i, M_s_row_v = nonzero_slice(M[s, :])
-        M_s_col_i, M_s_col_v = nonzero_slice(M[:, s])
+        M_s_row_i, M_s_row_v = take_nonzero(M, s, 0)
+        M_s_col_i, M_s_col_v = take_nonzero(M, s, 1)
         M_t_s = coo_to_flat((M_s_col_i, M_s_col_v), M.shape[0])[t]
         M_s_t = coo_to_flat((M_s_row_i, M_s_row_v), M.shape[0])[t]
 
@@ -969,7 +974,7 @@ def compute_overall_entropy(M, d_out, d_in, B, N, E):
     else:
         data_S = 0.0
         for i in range(B):
-            M_row_i, M_row_v = nonzero_slice(M[i, :], sort=False)
+            M_row_i, M_row_v = take_nonzero(M, i, 0, sort=False)
             entries = M_row_v * np.log(M_row_v / (d_out[i] * d_in[M_row_i]).astype(float))
             data_S += -np.sum(entries)
 

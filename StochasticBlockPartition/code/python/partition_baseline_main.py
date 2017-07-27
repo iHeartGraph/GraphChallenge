@@ -70,8 +70,8 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
             break
 
         # Index of non-zero block entries and their associated weights
-        in_idx, in_weight = nonzero_slice(M[:, current_block])
-        out_idx, out_weight = nonzero_slice(M[current_block, :])
+        in_idx, in_weight = take_nonzero(M, current_block, 1)
+        out_idx, out_weight = take_nonzero(M, current_block, 0)
 
         block_neighbors = np.concatenate((in_idx, out_idx))
         block_neighbor_weights = np.concatenate((in_weight, out_weight))
@@ -439,15 +439,9 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
                 block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
             elif 1:
                 for w in where_modified:
-                    nz_i, nz_v = nonzero_slice(M[w, :])
+                    nz_i, nz_v = take_nonzero(M, w, 0, sort=False)
                     block_degrees_out[w] = np.sum(nz_v)
-                    nz_i, nz_v = nonzero_slice(M[:, w])
-                    block_degrees_in[w] = np.sum(nz_v)
-            elif 0:
-                for w in where_modified:
-                    nz_i, nz_v = nonzero_slice(M[w, :])
-                    block_degrees_out[w] = np.sum(nz_v)
-                    nz_i, nz_v = nonzero_slice(M[:, w])
+                    nz_i, nz_v = take_nonzero(M, w, 1, sort=False)
                     block_degrees_in[w] = np.sum(nz_v)
 
             block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
@@ -1086,8 +1080,8 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
         current_block = r + partition_offset_0
 
         # Index of non-zero block entries and their associated weights
-        in_idx, in_weight = nonzero_slice(M[:, current_block])
-        out_idx, out_weight = nonzero_slice(M[current_block, :])
+        in_idx, in_weight = take_nonzero(M, current_block, 1)
+        out_idx, out_weight = take_nonzero(M, current_block, 0)
 
         block_neighbors = np.concatenate((in_idx, out_idx))
         block_neighbor_weights = np.concatenate((in_weight, out_weight))
