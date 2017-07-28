@@ -311,10 +311,26 @@ def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col):
     b[ni] = s
 
     if type(M) is fast_sparse_array:
-        M.set_row_nonzeros(r, M_r_row[0], M_r_row[1])
-        M.set_row_nonzeros(s, M_s_row[0], M_s_row[1])
-        M.set_col_nonzeros(r, M_r_col[0], M_r_col[1])
-        M.set_col_nonzeros(s, M_s_col[0], M_s_col[1])
+        if type(M_r_row) is nonzero_dict:
+            M.set_axis_dict(r, 0, M_r_row)
+        else:
+            M.set_row_nonzeros(r, M_r_row[0], M_r_row[1])
+
+        if type(M_s_row) is nonzero_dict:
+            M.set_axis_dict(s, 0, M_s_row)
+        else:
+            M.set_row_nonzeros(s, M_s_row[0], M_s_row[1])
+
+        if type(M_r_col) is nonzero_dict:
+            M.set_axis_dict(r, 1, M_r_col)
+        else:
+            M.set_col_nonzeros(r, M_r_col[0], M_r_col[1])
+
+        if type(M_s_col) is nonzero_dict:
+            M.set_axis_dict(s, 1, M_s_col)
+        else:
+            M.set_col_nonzeros(s, M_s_col[0], M_s_col[1])
+
         return b, M
 
     if type(M_r_row) is tuple:
