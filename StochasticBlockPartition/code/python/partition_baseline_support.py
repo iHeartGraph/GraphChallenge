@@ -19,7 +19,7 @@ from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
 from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict
 from collections import Iterable
-use_sparse_dict = 0
+use_sparse_dict = 1
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -41,10 +41,13 @@ def is_sorted(x):
 def is_in_sorted(needle, haystack):
     #assert(is_sorted(haystack))
     if len(haystack) == 0:
-        return True
+        return np.zeros(needle.shape, dtype=bool)
+    elif len(needle) == 0:
+        return np.array([], dtype=bool)
     loc = np.searchsorted(haystack, needle)
     loc[(loc == len(haystack))] = len(haystack) - 1
     res = (haystack[loc] == needle)
+    res = res.reshape(needle.shape)
     return res
 
 
@@ -806,13 +809,21 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
     if 0:
         M_t_s = M[t, s]
         M_s_t = M[s, t]
+    elif use_sparse_dict:
+        # t appears to already be sorted, verified with assert(is_sorted(t))
+        # t = np.sort(t)
+        M_s_row_d = M.take_dict(s, 0)
+        M_s_col_d = M.take_dict(s, 1)
+        M_t_s = np.fromiter((M_s_row_d[i] for i in t), dtype=int)
+        M_s_t = np.fromiter((M_s_col_d[i] for i in t), dtype=int)
     else:
-        t = np.sort(t)
-        # t is sorted, opportunity for speedup later.
+        # t = np.sort(t)
         M_s_row_i, M_s_row_v = take_nonzero(M, s, 0)
         M_s_col_i, M_s_col_v = take_nonzero(M, s, 1)
         M_t_s = coo_to_flat((M_s_col_i, M_s_col_v), M.shape[0])[t]
         M_s_t = coo_to_flat((M_s_row_i, M_s_row_v), M.shape[0])[t]
+
+    p_forward = np.sum(count * (M_t_s + M_s_t + 1) / (d[t] + float(B)))
 
     p_backward = 0.0
 
@@ -823,7 +834,6 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_r_row_i, M_r_row_v = M_r_row
     else:
         M_r_row_i, M_r_row_v = nonzero_slice(M_r_row)
-        # M_r_row = M_r_row[t]
 
     if type(M_r_col) is nonzero_dict:
         M_r_col_i = np.fromiter(sorted(M_r_col.keys()), dtype=int)
@@ -833,9 +843,10 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
     else:
         M_r_col_i, M_r_col_v = nonzero_slice(M_r_col)
 
+
     if type(M_r_row) is tuple or type(M_r_row) is nonzero_dict:
         in_t = search_array(M_r_row_i, t)
-        in_M_r_row = np.in1d(t, M_r_row_i)
+        in_M_r_row = search_array(t, M_r_row_i)
         p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + float(B)))
     else:
         M_r_row = M_r_row[t]
@@ -843,20 +854,11 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
 
     if type(M_r_col) is tuple or type(M_r_col) is nonzero_dict:
         in_t = search_array(M_r_col_i, t)
-        in_M_r_col = np.in1d(t, M_r_col_i)
+        in_M_r_col = search_array(t, M_r_col_i)
         p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + float(B)))
     else:
         M_r_col = M_r_col[t]
         p_backward += np.sum(count * (M_r_col + 1) / (d_new[t] + float(B)))
-
-
-    p_forward = np.sum(count * (M_t_s + M_s_t + 1) / (d[t] + float(B)))
-
-    #p_backward_orig = np.sum(count*(M_r_row + M_r_col + 1) / (d_new[t] + float(B)))
-
-    if 0:
-        assert_close(p_backward, p_b, 1e-9)
-        assert_close(p_forward, p_f, 1e-9)
 
     return p_backward / p_forward
 
