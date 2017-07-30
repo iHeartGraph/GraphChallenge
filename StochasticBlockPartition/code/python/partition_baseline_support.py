@@ -805,6 +805,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
 
     t, idx = np.unique(np.append(b_out, b_in), return_inverse=True)  # find all the neighboring blocks
     count = np.bincount(idx, weights=np.append(count_out, count_in)).astype(int)  # count edges to neighboring blocks
+    B = float(B)
 
     if 0:
         M_t_s = M[t, s]
@@ -823,12 +824,12 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_t_s = coo_to_flat((M_s_col_i, M_s_col_v), M.shape[0])[t]
         M_s_t = coo_to_flat((M_s_row_i, M_s_row_v), M.shape[0])[t]
 
-    p_forward = np.sum(count * (M_t_s + M_s_t + 1) / (d[t] + float(B)))
+    p_forward = np.sum(count * (M_t_s + M_s_t + 1) / (d[t] + B))
 
     p_backward = 0.0
 
     if type(M_r_row) is nonzero_dict:
-        M_r_row_i = np.fromiter(sorted(M_r_row.keys()), dtype=int)
+        M_r_row_i = np.fromiter(M_r_row.keys(), dtype=int)
         M_r_row_v = np.fromiter((M_r_row[k] for k in M_r_row_i), dtype=int)
     elif type(M_r_row) is tuple:
         M_r_row_i, M_r_row_v = M_r_row
@@ -836,7 +837,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_r_row_i, M_r_row_v = nonzero_slice(M_r_row)
 
     if type(M_r_col) is nonzero_dict:
-        M_r_col_i = np.fromiter(sorted(M_r_col.keys()), dtype=int)
+        M_r_col_i = np.fromiter(M_r_col.keys(), dtype=int)
         M_r_col_v = np.fromiter((M_r_col[k] for k in M_r_col_i), dtype=int)
     elif type(M_r_col) is tuple:
         M_r_col_i, M_r_col_v = M_r_col
@@ -844,21 +845,27 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_r_col_i, M_r_col_v = nonzero_slice(M_r_col)
 
 
-    if type(M_r_row) is tuple or type(M_r_row) is nonzero_dict:
+    if type(M_r_row) is tuple:
         in_t = search_array(M_r_row_i, t)
         in_M_r_row = search_array(t, M_r_row_i)
-        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + float(B)))
+        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
+    elif type(M_r_row) is nonzero_dict:
+        in_t = search_array(M_r_row_i, t)
+        in_M_r_row = np.fromiter((i in M_r_row for i in t), dtype=bool)
+        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
     else:
-        M_r_row = M_r_row[t]
-        p_backward += np.sum(count * M_r_row / (d_new[t] + float(B)))
+        p_backward += np.sum(count * M_r_row[t] / (d_new[t] + B))
 
-    if type(M_r_col) is tuple or type(M_r_col) is nonzero_dict:
+    if type(M_r_col) is tuple:
         in_t = search_array(M_r_col_i, t)
         in_M_r_col = search_array(t, M_r_col_i)
-        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + float(B)))
+        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B))
+    elif type(M_r_col) is nonzero_dict:
+        in_t = search_array(M_r_col_i, t)
+        in_M_r_col = np.fromiter((i in M_r_col for i in t), dtype=bool)
+        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B)) 
     else:
-        M_r_col = M_r_col[t]
-        p_backward += np.sum(count * (M_r_col + 1) / (d_new[t] + float(B)))
+        p_backward += np.sum(count * (M_r_col[t] + 1) / (d_new[t] + B))
 
     return p_backward / p_forward
 
