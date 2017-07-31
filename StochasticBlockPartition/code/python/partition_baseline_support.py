@@ -19,7 +19,6 @@ from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
 from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero
 from collections import Iterable
-use_sparse_dict = 1
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -39,7 +38,6 @@ def is_sorted(x):
     return len(x) == 1 or (x[1:] >= x[0:-1]).all()
 
 def is_in_sorted(needle, haystack):
-    #assert(is_sorted(haystack))
     if len(haystack) == 0:
         return np.zeros(needle.shape, dtype=bool)
     elif len(needle) == 0:
@@ -342,8 +340,7 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
             # force proposals to be different from current block via a random offset and modulo
             s1 = (r + 1 + np.random.randint(B - 1)) % B
         else:
-            s1 = np.random.randint(B)
-
+            s1 = np.random.randint(B, dtype=np.int64)
         return s1
     else:
         # proposals by random draw from neighbors of block partition[rand_neighbor]
@@ -357,7 +354,7 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
 
             if len(multinomial_choices) == 0:
                 # the current block has no neighbors. randomly propose a different block
-                s2 = (r + 1 + np.random.randint(B - 1)) % B
+                s2 = (r + 1 + np.random.randint(B - 1, dtype=np.int64)) % B
             else:
                 multinomial_probs /= multinomial_probs.sum()
                 s2 = np.random.choice(multinomial_choices, p = multinomial_probs)
@@ -395,12 +392,13 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, sparse):
+                                                       agg_move, use_sparse_alg, use_sparse_data):
 
     verify_sparse = 0
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
-        if sparse:
+        if use_sparse_data:
+            # xxx convert to dict
             M_r_row_i, M_r_row_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
             M_r_col_i, M_r_col_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
             new_M_r_row = (M_r_row_i, M_r_row_v)
@@ -418,15 +416,15 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
         offset = np.sum(count_in[where_b_in_r])
 
-        if not sparse or verify_sparse:
+        if not use_sparse_alg or verify_sparse:
             M_r_row = M[r, :].copy()
             M_r_row[b_out] -= count_out
             M_r_row[r] -= offset
             M_r_row[s] += offset
             new_M_r_row = M_r_row
 
-        if sparse:
-            if use_sparse_dict:
+        if use_sparse_alg:
+            if use_sparse_data:
                 M_r_row_d = M.take_dict(r, 0).copy()
                 for k,v in zip(b_out,count_out):
                     M_r_row_d[k] -= v
@@ -434,7 +432,8 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 M_r_row_d[s] += offset
                 new_M_r_row = M_r_row_d
             else:
-                M_r_row_i, M_r_row_v = take_nonzero(M, r, 0)
+                M_r_row_i, M_r_row_v = take_nonzero(M, r, 0, sort = True)
+
                 M_r_row_in_b_out = search_array(M_r_row_i, b_out)
                 M_r_row_v[M_r_row_in_b_out] -= count_out
 
@@ -442,11 +441,13 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 M_r_row_v[x] -= offset
 
                 x = search_array(M_r_row_i, np.array([s]))
+
                 if x.any():
                     M_r_row_v[x] += offset
                 else:
                     M_r_row_v = np.append(M_r_row_v, offset)
                     M_r_row_i = np.append(M_r_row_i, s)
+                    # Note indices are longer sorted after append.
 
                 # After modifying the entries, elements of the rows and columns may have become zero.
                 nz = (M_r_row_v != 0)
@@ -471,15 +472,15 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                     print("")
                     raise Exception("Array M_r_row mismatch encountered")
 
-        if not sparse or verify_sparse:
+        if not use_sparse_alg or verify_sparse:
             M_r_col = M[:, r].copy()
             M_r_col[b_in] -= count_in
             M_r_col[r] -= np.sum(count_out[where_b_out_r])
             M_r_col[s] += np.sum(count_out[where_b_out_r])
             new_M_r_col = M_r_col
 
-        if sparse:
-            if use_sparse_dict:
+        if use_sparse_alg:
+            if use_sparse_data:
                 M_r_col_d = M.take_dict(r, 1).copy()
                 for k,v in zip(b_in,count_in):
                     M_r_col_d[k] -= v
@@ -487,7 +488,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 M_r_col_d[s] += np.sum(count_out[where_b_out_r])
                 new_M_r_col = M_r_col_d
             else:
-                M_r_col_i, M_r_col_v = take_nonzero(M, r, 1)
+                M_r_col_i, M_r_col_v = take_nonzero(M, r, 1, sort = True)
 
                 M_r_col_in_b_in = search_array(M_r_col_i, b_in)
                 b_in_in_M_r_col = search_array(b_in, M_r_col_i)
@@ -503,6 +504,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 else:
                     M_r_col_v = np.append(M_r_col_v, np.sum(count_out[where_b_out_r]))
                     M_r_col_i = np.append(M_r_col_i, s)
+                    # Note indices are longer sorted after append.
 
                 # After modifying the entries, elements of the rows and columns may have become zero.
                 nz = (M_r_col_v != 0)
@@ -532,15 +534,15 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
     # Compute M_s_row
     offset = np.sum(count_in[where_b_in_s]) + count_self
-    if not sparse or verify_sparse:
+    if not use_sparse_alg or verify_sparse:
         M_s_row = M[s, :].copy()
         M_s_row[b_out] += count_out
         M_s_row[r] -= offset
         M_s_row[s] += offset
         new_M_s_row = M_s_row
 
-    if sparse:
-        if use_sparse_dict:
+    if use_sparse_alg:
+        if use_sparse_data:
             M_s_row_d = M.take_dict(s, 0).copy()
             for k,v in zip(b_out,count_out):
                 M_s_row_d[k] += v
@@ -548,7 +550,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             M_s_row_d[s] += offset
             new_M_s_row = M_s_row_d
         else:
-            M_s_row_i, M_s_row_v = take_nonzero(M, s, 0)
+            M_s_row_i, M_s_row_v = take_nonzero(M, s, 0, sort = True)
             M_s_row_in_b_out = search_array(M_s_row_i, b_out)
             b_out_in_M_s_row = search_array(b_out, M_s_row_i)
 
@@ -558,6 +560,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
             M_s_row_i = np.append(M_s_row_i, b_out[~b_out_in_M_s_row])
             M_s_row_v = np.append(M_s_row_v, count_out[~b_out_in_M_s_row])
+            # Note indices are longer sorted after append.
 
             x = search_array(M_s_row_i, np.array([r]))
             M_s_row_v[x] -= offset
@@ -605,15 +608,15 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
     # Compute M_s_col
     offset = np.sum(count_out[where_b_out_s]) + count_self
 
-    if not sparse or verify_sparse:
+    if not use_sparse_alg or verify_sparse:
         M_s_col = M[:, s].copy()
         M_s_col[b_in] += count_in
         M_s_col[r] -= offset
         M_s_col[s] += offset
         new_M_s_col = M_s_col
 
-    if sparse:
-        if use_sparse_dict:
+    if use_sparse_alg:
+        if use_sparse_data:
             M_s_col_d = M.take_dict(s, 1).copy()
             for k,v in zip(b_in,count_in):
                 M_s_col_d[k] += v
@@ -621,7 +624,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             M_s_col_d[s] += offset
             new_M_s_col = M_s_col_d
         else:
-            M_s_col_i, M_s_col_v = take_nonzero(M, s, 1)
+            M_s_col_i, M_s_col_v = take_nonzero(M, s, 1, sort = True)
             M_s_col_in_b_in = search_array(M_s_col_i, b_in)
             b_in_in_M_s_col = search_array(b_in, M_s_col_i)
 
@@ -631,6 +634,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
             M_s_col_i = np.append(M_s_col_i, b_in[~b_in_in_M_s_col])
             M_s_col_v = np.append(M_s_col_v, count_in[~b_in_in_M_s_col])
+            # Note indices are longer sorted after append.
 
             x = search_array(M_s_col_i, np.array([r]))
             M_s_col_v[x] -= offset
@@ -743,7 +747,7 @@ def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
         return (d_outs, d_ins, ds)
 
 
-def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_row, M_r_col, B, d, d_new):
+def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_row, M_r_col, B, d, d_new, use_sparse_alg, use_sparse_data):
     """Compute the Hastings correction for the proposed block from the current block
 
         Parameters
@@ -807,10 +811,10 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
     count = np.bincount(idx, weights=np.append(count_out, count_in)).astype(int)  # count edges to neighboring blocks
     B = float(B)
 
-    if 0:
-        M_t_s = M[t, s]
-        M_s_t = M[s, t]
-    elif use_sparse_dict:
+    # M_t_s = M[t, s]
+    # M_s_t = M[s, t]
+
+    if use_sparse_data:
         # t appears to already be sorted, verified with assert(is_sorted(t))
         # t = np.sort(t)
         M_s_row_d = M.take_dict(s, 0)
@@ -819,8 +823,8 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         M_s_t = np.fromiter((M_s_col_d[i] for i in t), dtype=int)
     else:
         # t = np.sort(t)
-        M_s_row_i, M_s_row_v = take_nonzero(M, s, 0)
-        M_s_col_i, M_s_col_v = take_nonzero(M, s, 1)
+        M_s_row_i, M_s_row_v = take_nonzero(M, s, 0, sort = True)
+        M_s_col_i, M_s_col_v = take_nonzero(M, s, 1, sort = True)
         M_t_s = coo_to_flat((M_s_col_i, M_s_col_v), M.shape[0])[t]
         M_s_t = coo_to_flat((M_s_row_i, M_s_row_v), M.shape[0])[t]
 
@@ -828,44 +832,41 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
 
     p_backward = 0.0
 
-    if getattr(M_r_row, "keys", None) is not None:
+    if use_sparse_data:
         M_r_row_i = M_r_row.keys()
         M_r_row_v = M_r_row.values()
-    elif type(M_r_row) is tuple:
+    elif use_sparse_alg:
         M_r_row_i, M_r_row_v = M_r_row
     else:
         M_r_row_i, M_r_row_v = nonzero_slice(M_r_row)
 
-    if getattr(M_r_col, "keys", None) is not None:
+    if use_sparse_data:
         M_r_col_i = M_r_col.keys()
         M_r_col_v = M_r_col.values()
-    elif type(M_r_col) is tuple:
+    elif use_sparse_alg:
         M_r_col_i, M_r_col_v = M_r_col
     else:
         M_r_col_i, M_r_col_v = nonzero_slice(M_r_col)
 
-
-    if type(M_r_row) is tuple:
+    if use_sparse_data:
         in_t = search_array(M_r_row_i, t)
-        in_M_r_row = search_array(t, M_r_row_i)
-        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
-    elif getattr(M_r_row, "keys", None) is not None:
-        in_t = search_array(M_r_row_i, t)
-        #in_M_r_row = search_array(t, M_r_row_i)
         in_M_r_row = np.fromiter((i in M_r_row for i in t), dtype=bool)
+        p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
+    elif use_sparse_alg:
+        in_t = search_array(M_r_row_i, t)
+        in_M_r_row = np.in1d(t, M_r_row_i)
         p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
     else:
         p_backward += np.sum(count * M_r_row[t] / (d_new[t] + B))
 
-    if type(M_r_col) is tuple:
+    if use_sparse_data:
         in_t = search_array(M_r_col_i, t)
-        in_M_r_col = search_array(t, M_r_col_i)
-        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B))
-    elif getattr(M_r_col, "keys", None) is not None:
-        in_t = search_array(M_r_col_i, t)
-        #in_M_r_col = search_array(t, M_r_col_i)
         in_M_r_col = np.fromiter((i in M_r_col for i in t), dtype=bool)
         p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B)) 
+    elif use_sparse_alg:
+        in_t = search_array(M_r_col_i, t)
+        in_M_r_col = np.in1d(t, M_r_col_i)
+        p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B))
     else:
         p_backward += np.sum(count * (M_r_col[t] + 1) / (d_new[t] + B))
 

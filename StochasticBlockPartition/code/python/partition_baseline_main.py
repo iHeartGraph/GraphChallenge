@@ -106,7 +106,9 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
                                                     in_idx, in_weight,
                                                     M[current_block, current_block],
                                                     agg_move = 1,
-                                                    sparse = args.sparse)
+                                                    use_sparse_alg = args.sparse_algorithm,
+                                                    use_sparse_data = args.sparse_data
+                )
 
             # compute change in entropy / posterior
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
@@ -221,6 +223,7 @@ def propose_node_movement_wrapper(tup):
 def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors):
 
     current_block = partition[current_node]
+
     # propose a new block for this node
     proposal = propose_new_partition(
         current_block,
@@ -233,8 +236,6 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
     num_out_neighbor_edges = vertex_num_out_neighbor_edges[current_node]
     num_in_neighbor_edges = vertex_num_in_neighbor_edges[current_node]
     num_neighbor_edges = vertex_num_neighbor_edges[current_node]
-
-    proposal = int(proposal)
 
     # determine whether to accept or reject the proposal
     if proposal == current_block:
@@ -260,7 +261,9 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
         new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col = \
             compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
                                                                blocks_out, count_out, blocks_in, count_in,
-                                                               self_edge_weight, agg_move = 0, sparse = args.sparse)
+                                                               self_edge_weight, agg_move = 0,
+                                                               use_sparse_alg = args.sparse_algorithm,
+                                                               use_sparse_data = args.sparse_data)
 
         # compute new block degrees
         block_degrees_out_new, block_degrees_in_new, block_degrees_new = compute_new_block_degrees(
@@ -277,7 +280,9 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
                                                           new_M_r_row,
                                                           new_M_r_col,
                                                           num_blocks, block_degrees,
-                                                          block_degrees_new)
+                                                          block_degrees_new,
+                                                          use_sparse_alg = args.sparse_algorithm,
+                                                          use_sparse_data = args.sparse_data)
 
         # compute change in entropy / posterior
         delta_entropy = compute_delta_entropy(current_block, proposal,
@@ -311,17 +316,10 @@ def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col):
     b[ni] = s
 
     if type(M) is fast_sparse_array:
-        if 1:
-            M.set_axis_dict(r, 0, M_r_row)
-            M.set_axis_dict(s, 0, M_s_row)
-            M.set_axis_dict(r, 1, M_r_col)
-            M.set_axis_dict(s, 1, M_s_col)
-        else:
-            M.set_row_nonzeros(r, M_r_row[0], M_r_row[1])
-            M.set_row_nonzeros(s, M_s_row[0], M_s_row[1])
-            M.set_col_nonzeros(r, M_r_col[0], M_r_col[1])
-            M.set_col_nonzeros(s, M_s_col[0], M_s_col[1])
-
+        M.set_axis_dict(r, 0, M_r_row)
+        M.set_axis_dict(s, 0, M_s_row)
+        M.set_axis_dict(r, 1, M_r_col)
+        M.set_axis_dict(s, 1, M_s_col)
         return b, M
 
     if type(M_r_row) is tuple:
@@ -429,7 +427,9 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
                                 compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                                    blocks_out, count_out, blocks_in, count_in,
-                                                                                   self_edge_weight, agg_move = 0, sparse = args.sparse)
+                                                                                   self_edge_weight, agg_move = 0,
+                                                                                   use_sparse_alg = args.sparse_algorithm,
+                                                                                   use_sparse_data = args.sparse_data)
 
             partition, M = update_partition_single(partition, ni, proposal, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -624,7 +624,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                                         compute_new_rows_cols_interblock_edge_count_matrix(
                                             M, current_block, proposal,
                                             blocks_out, count_out, blocks_in, count_in,
-                                            self_edge_weight, agg_move = 0, sparse = args.sparse)
+                                            self_edge_weight, agg_move = 0,
+                                            use_sparse_alg = args.sparse_algorithm,
+                                            use_sparse_data = args.sparse_data)
 
                     partition, M = update_partition_single(partition, ni, proposal, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
@@ -768,7 +770,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = initialize_edge_counts(out_neighbors,
                                                                                                num_blocks_t,
                                                                                                partition_t,
-                                                                                               args.sparse)
+                                                                                               args.sparse_data)
         # compute the global entropy for MCMC convergence criterion
         overall_entropy = compute_overall_entropy(M_t, block_degrees_out_t, block_degrees_in_t, num_blocks_t, N,
                                                   E)
@@ -891,7 +893,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
             = initialize_edge_counts(out_neighbors,
                                      num_blocks,
                                      partition,
-                                     args.sparse)
+                                     args.sparse_data)
         # initialize items before iterations to find the partition with the optimal number of blocks
         hist, graph_object = initialize_partition_variables()
         num_blocks_to_merge = int(num_blocks * num_block_reduction_rate)
@@ -906,7 +908,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
             for partition in partition_bracket:
                 num_blocks = 1 + np.max(partition)
                 interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                    = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse)
+                    = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse_data)
 
                 overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
 
@@ -922,7 +924,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, stop_at_bracket = 
             partition = partition_bracket[0]
             num_blocks = 1 + np.max(partition)
             interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse)
+                = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse_data)
             overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
             
 
@@ -1049,7 +1051,7 @@ def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
         # Instead of relying on initialize_edge_counts.
 
         M, block_degrees_out, block_degrees_in, block_degrees \
-            = initialize_edge_counts(out_neighbors, B, partition, args.sparse)
+            = initialize_edge_counts(out_neighbors, B, partition, args.sparse_data)
 
         if args.verbose > 2:
             print("M.shape = %s, M = \n%s" % (str(M.shape),M))
@@ -1104,7 +1106,9 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
                 = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                      out_idx, out_weight,
                                                                      in_idx, in_weight,
-                                                                     M[current_block, current_block], agg_move = 1)
+                                                                     M[current_block, current_block], agg_move = 1,
+                                                                     use_sparse_alg = args.sparse_algorithm,
+                                                                     use_sparse_data = args.sparse_data)
 
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,
@@ -1304,6 +1308,8 @@ if __name__ == '__main__':
     parser.add_argument("-b", "--node-move-update-batch-size", type=int, required=False, default=1)
     parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
     parser.add_argument("--sparse", type=int, required=False, default=0)
+    parser.add_argument("--sparse-algorithm", type=int, required=False, default=0)
+    parser.add_argument("--sparse-data", type=int, required=False, default=0)
     parser.add_argument("-s", "--sort", type=int, required=False, default=0)
     parser.add_argument("-S", "--seed", type=int, required=False, default=-1)
     parser.add_argument("-m", "--merge-method", type=int, required=False, default=0)
@@ -1320,6 +1326,12 @@ if __name__ == '__main__':
 
     np.seterr(all='raise')
     args.debug = 0
+
+    if args.sparse:
+        args.sparse_algorithm = 1
+        args.sparse_data = 1
+    elif args.sparse_data:
+        args.sparse_algorithm = 1
 
     if args.verbose > 0:
         d = vars(args)
