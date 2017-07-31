@@ -1,5 +1,5 @@
 import numpy as np
-from fast_sparse_array import nonzero_slice, take_nonzero, nonzero_dict
+from fast_sparse_array import nonzero_slice, take_nonzero
 from collections import defaultdict
 
 def entropy_row_calc(x, y, c):
@@ -74,34 +74,41 @@ def entropy_row_nz_ignore(x, y, c, x_nz, r, s):
 def compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
 
-    M_r_t1_i, M_r_t1 = take_nonzero(M, r, 0, sort=False)
-    M_s_t1_i, M_s_t1 = take_nonzero(M, s, 0, sort=False)
-    M_t2_r_i, M_t2_r = take_nonzero(M, r, 1, sort=False)
-    M_t2_s_i, M_t2_s = take_nonzero(M, s, 1, sort=False)
+    if 1:
+        M_r_t1_i, M_r_t1 = take_nonzero(M, r, 0, sort=False)
+        M_s_t1_i, M_s_t1 = take_nonzero(M, s, 0, sort=False)
+        M_t2_r_i, M_t2_r = take_nonzero(M, r, 1, sort=False)
+        M_t2_s_i, M_t2_s = take_nonzero(M, s, 1, sort=False)
+    else:
+        M_r_t1_i, M_r_t1 = M.take_dict(r, 0).keys(), M.take_dict(r, 0).values()
+        M_s_t1_i, M_s_t1 = M.take_dict(s, 0).keys(), M.take_dict(s, 0).values()
+        M_t2_r_i, M_t2_r = M.take_dict(r, 1).keys(), M.take_dict(r, 1).values()
+        M_t2_s_i, M_t2_s = M.take_dict(s, 1).keys(), M.take_dict(s, 1).values()
 
-    if type(M_r_row) is nonzero_dict:
-        M_r_row_i, M_r_row = np.fromiter(M_r_row.keys(), dtype=int), np.fromiter(M_r_row.values(), dtype=int)
+
+    if getattr(M_r_row, "keys", None) is not None:
+        M_r_row_i, M_r_row = M_r_row.keys(), M_r_row.values()
     elif type(M_r_row) is tuple:
         M_r_row_i, M_r_row = M_r_row
     else:
         M_r_row_i, M_r_row = nonzero_slice(M_r_row, sort=False)
 
-    if type(M_r_col) is nonzero_dict:
-        M_r_col_i, M_r_col = np.fromiter(M_r_col.keys(), dtype=int), np.fromiter(M_r_col.values(), dtype=int)
+    if getattr(M_r_col, "keys", None) is not None:
+        M_r_col_i, M_r_col = M_r_col.keys(), M_r_col.values()
     elif type(M_r_col) is tuple:
         M_r_col_i, M_r_col = M_r_col
     else:
         M_r_col_i, M_r_col = nonzero_slice(M_r_col, sort=False)
 
-    if type(M_s_row) is nonzero_dict:
-        M_s_row_i, M_s_row = np.fromiter(M_s_row.keys(), dtype=int), np.fromiter(M_s_row.values(), dtype=int)
+    if getattr(M_s_row, "keys", None) is not None:
+        M_s_row_i, M_s_row = M_s_row.keys(), M_s_row.values()
     elif type(M_s_row) is tuple:
         M_s_row_i, M_s_row = M_s_row
     else:
         M_s_row_i, M_s_row = nonzero_slice(M_s_row, sort=False)
 
-    if type(M_s_col) is nonzero_dict:
-        M_s_col_i, M_s_col = np.fromiter(M_s_col.keys(), dtype=int), np.fromiter(M_s_col.values(), dtype=int)
+    if getattr(M_s_col, "keys", None) is not None:
+        M_s_col_i, M_s_col = M_s_col.keys(), M_s_col.values()
     elif type(M_s_col) is tuple:
         M_s_col_i, M_s_col = M_s_col
     else:

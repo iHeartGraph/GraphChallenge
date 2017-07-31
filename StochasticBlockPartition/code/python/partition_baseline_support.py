@@ -17,7 +17,7 @@ from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
-from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict
+from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero
 from collections import Iterable
 use_sparse_dict = 1
 
@@ -348,8 +348,8 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
     else:
         # proposals by random draw from neighbors of block partition[rand_neighbor]
         if 1:
-            Mu_row_i, Mu_row = take_nonzero(M, u, 0)
-            Mu_col_i, Mu_col = take_nonzero(M, u, 1)
+            Mu_row_i, Mu_row = take_nonzero(M, u, 0, sort = False)
+            Mu_col_i, Mu_col = take_nonzero(M, u, 1, sort = False)
             multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
             multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
             if agg_move: # force proposal to be different from current block
@@ -828,17 +828,17 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
 
     p_backward = 0.0
 
-    if type(M_r_row) is nonzero_dict:
-        M_r_row_i = np.fromiter(M_r_row.keys(), dtype=int)
-        M_r_row_v = np.fromiter((M_r_row[k] for k in M_r_row_i), dtype=int)
+    if getattr(M_r_row, "keys", None) is not None:
+        M_r_row_i = M_r_row.keys()
+        M_r_row_v = M_r_row.values()
     elif type(M_r_row) is tuple:
         M_r_row_i, M_r_row_v = M_r_row
     else:
         M_r_row_i, M_r_row_v = nonzero_slice(M_r_row)
 
-    if type(M_r_col) is nonzero_dict:
-        M_r_col_i = np.fromiter(M_r_col.keys(), dtype=int)
-        M_r_col_v = np.fromiter((M_r_col[k] for k in M_r_col_i), dtype=int)
+    if getattr(M_r_col, "keys", None) is not None:
+        M_r_col_i = M_r_col.keys()
+        M_r_col_v = M_r_col.values()
     elif type(M_r_col) is tuple:
         M_r_col_i, M_r_col_v = M_r_col
     else:
@@ -849,8 +849,9 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         in_t = search_array(M_r_row_i, t)
         in_M_r_row = search_array(t, M_r_row_i)
         p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
-    elif type(M_r_row) is nonzero_dict:
+    elif getattr(M_r_row, "keys", None) is not None:
         in_t = search_array(M_r_row_i, t)
+        #in_M_r_row = search_array(t, M_r_row_i)
         in_M_r_row = np.fromiter((i in M_r_row for i in t), dtype=bool)
         p_backward += np.sum(count[in_M_r_row] * M_r_row_v[in_t] / (d_new[t[in_M_r_row]] + B))
     else:
@@ -860,8 +861,9 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         in_t = search_array(M_r_col_i, t)
         in_M_r_col = search_array(t, M_r_col_i)
         p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B))
-    elif type(M_r_col) is nonzero_dict:
+    elif getattr(M_r_col, "keys", None) is not None:
         in_t = search_array(M_r_col_i, t)
+        #in_M_r_col = search_array(t, M_r_col_i)
         in_M_r_col = np.fromiter((i in M_r_col for i in t), dtype=bool)
         p_backward += np.sum(count[in_M_r_col] * (M_r_col_v[in_t] + 1) / (d_new[t[in_M_r_col]] + B)) 
     else:
