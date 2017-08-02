@@ -6,6 +6,11 @@ if hasattr(dict, "viewkeys"):
 else:
     dict_keys_func = dict.keys
 
+if hasattr(dict, "viewvalues"):
+    dict_values_func = dict.viewvalues
+else:
+    dict_values_func = dict.values
+
 class nonzero_dict(dict):
     def __setitem__(self, idx, val):
         if val == 0:
@@ -24,9 +29,9 @@ class nonzero_dict(dict):
         d = nonzero_dict(self)
         return d
     def keys(self):
-        return np.fromiter(dict.keys(self), dtype=int)
+        return np.fromiter(dict_keys_func(self), dtype=int)
     def values(self):
-        return np.fromiter(dict.values(self), dtype=int)
+        return np.fromiter(dict_values_func(self), dtype=int)
     def dict_keys(self):
         return dict_keys_func(self)
 
