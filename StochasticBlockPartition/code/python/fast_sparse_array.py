@@ -258,7 +258,18 @@ class fast_sparse_array(object):
         for i in range(c.shape[1]):
             c.cols[i] = self.cols[i].copy()
         return c
-
+    def shared_memory_copy(self, manager):
+        # Copy to a shared memory object.
+        c = fast_sparse_array(self.shape)
+        shared_rows = manager.list(self.rows)
+        shared_cols = manager.list(self.cols)
+        for i in range(c.shape[0]):
+            shared_rows[i] = manager.dict(self.rows[i])
+        for i in range(c.shape[1]):
+            shared_cols[i] = manager.dict(self.cols[i])
+        c.rows = shared_rows
+        c.cols = shared_cols
+        return c
 
 def is_sorted(x):
     return len(x) == 1 or (x[1:] >= x[0:-1]).all()
