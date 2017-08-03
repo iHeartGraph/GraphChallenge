@@ -1,7 +1,7 @@
 from partition_baseline_support import *
 import multiprocessing as mp
 import multiprocessing.pool
-from multiprocessing import Pool, Value, current_process
+from multiprocessing import Pool, Value, Semaphore, Manager, current_process
 from functools import reduce
 import pickle
 import timeit
@@ -146,41 +146,31 @@ def propose_node_movement_wrapper(tup):
 
     global update_id, partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in
 
-    start,stop,step = tup
+    rank,start,stop,step = tup
 
-    state = syms['state']
     lock = syms['lock']
     n_thread = syms['n_thread']
 
     results = syms['results']
-    (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms, results_is_non_seq) = syms['results']
+    (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms) = syms['results']
 
     if args.pipe:
         pipe = syms['pipe']
 
     pid = current_process().pid
 
-    (update_id_shared, partition_shared, interblock_edge_count_shared, num_blocks, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, where_modified_shared, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors) = state
+    (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
 
-    is_non_seq = 0
+    (update_id_shared, interblock_edge_count_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
 
     lock.acquire()
-
-    if update_id != update_id_shared.value - 1:
-        is_non_seq = 1
 
     if update_id != update_id_shared.value:
         if update_id == -1:
             (interblock_edge_count, partition, block_degrees, block_degrees_out, block_degrees_in) \
                 = (i.copy() for i in (interblock_edge_count_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
-        elif is_non_seq:
-            interblock_edge_count[:] = interblock_edge_count_shared[:]
-            block_degrees_in[:] = block_degrees_in_shared[:]
-            block_degrees_out[:] = block_degrees_out_shared[:]
-            block_degrees[:] = block_degrees_shared[:]
-            partition[:] = partition_shared[:]            
         else:
-            w = np.where(where_modified_shared)
+            w = np.where(block_modified_time_shared > update_id)
             interblock_edge_count[w, :] = interblock_edge_count_shared[w, :]
             interblock_edge_count[:, w] = interblock_edge_count_shared[:, w]
             block_degrees_in[w] = block_degrees_in_shared[w]
@@ -212,13 +202,17 @@ def propose_node_movement_wrapper(tup):
         results_delta_entropy[ni] = delta_entropy
         results_accept[ni] = accept
         results_propose_time_worker_ms[ni] = t_elapsed_ms
-        results_is_non_seq[ni] = is_non_seq
 
     if args.pipe:
-        os.write(pipe[1], start.to_bytes(4, byteorder='little') + stop.to_bytes(4, byteorder='little') + step.to_bytes(4, byteorder='little'))
+        os.write(pipe[1],
+                 rank.to_bytes(4, byteorder='little')
+                 + update_id.to_bytes(4, byteorder='little')
+                 + start.to_bytes(4, byteorder='little')
+                 + stop.to_bytes(4, byteorder='little')
+                 + step.to_bytes(4, byteorder='little'))
         return
     else:
-        return start,stop,step
+        return rank,update_id,start,stop,step
 
 def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors):
 
@@ -492,27 +486,38 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     lock = mp.Lock()
 
     modified = np.zeros(M.shape[0], dtype=bool)
-    where_modified_shared = shared_memory_copy(modified)
+    block_modified_time_shared = shared_memory_empty(modified.shape)
+    block_modified_time_shared[:] = 0
+
     update_id_shared = Value('i', 0)
 
-    (M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared) \
-        = (shared_memory_copy(i) for i in (M, partition, block_degrees, block_degrees_out, block_degrees_in))
+    last_purge = -1
+    worker_progress = np.empty(n_thread, dtype=int)
+    worker_progress[:] = last_purge
 
-    state = (update_id_shared, partition_shared, M_shared, num_blocks, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, where_modified_shared, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors)
+    (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared) \
+        = (shared_memory_copy(i) for i in (partition, block_degrees, block_degrees_out, block_degrees_in))
 
+    if args.sparse_data:
+        manager = Manager()
+        M_shared = M.shared_memory_copy(manager)
+    else:
+        M_shared = shared_memory_copy(M)
+
+    static_state = (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, args.sparse_data)
 
     shape = partition.shape
     results_proposal = shared_memory_empty(shape)
     results_delta_entropy = shared_memory_empty(shape, dtype='float')
     results_accept = shared_memory_empty(shape, dtype='bool')
     results_propose_time_worker_ms = shared_memory_empty(shape, dtype='float')
-    results_is_non_seq = shared_memory_empty(shape, dtype='bool')
 
     syms = {}
-    syms['results'] = (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms, results_is_non_seq)
+    syms['results'] = (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms)
     syms['lock'] = lock
-    syms['state'] = state
+    syms['static_state'] = static_state
     syms['n_thread'] = n_thread
+    syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared)
 
     if args.pipe:
         pipe = os.pipe()
@@ -549,7 +554,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         propose_movement_batch_size = 10
 
         group_size = args.node_propose_batch_size
-        chunks = [(i, min(i+group_size, N), 1) for i in range(0,N,group_size)]
+        chunks = [((i // group_size) % n_thread, i, min(i+group_size, N), 1) for i in range(0,N,group_size)]
 
         if 1:
             movements = pool.imap_unordered(propose_node_movement_wrapper, chunks)
@@ -559,6 +564,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         t_propose_end = timeit.default_timer()
         propose_time_ms = (t_propose_end - t_propose_start) * 1e3
         propose_time_ms_cum += propose_time_ms
+
+        # xxx
+        # time.sleep(10)
 
         t_merge_start = timeit.default_timer()
 
@@ -571,11 +579,13 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         while proposal_cnt < N:
 
             if args.pipe:
-                buf = os.read(pipe[0], 4*3)
-                start,stop,step = struct.unpack('<iii', buf)
+                buf = os.read(pipe[0], 4*5)
+                rank,worker_update_id,start,stop,step = struct.unpack('<iiiii', buf)
             else:
-                start,stop,step = movements.next()
+                rank,worker_update_id,start,stop,step = movements.next()
     
+            worker_progress[rank] = worker_update_id
+
             for ni in range(start,stop,step):
 
                 useless_time_beg = timeit.default_timer()
@@ -584,11 +594,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                 delta_entropy = results_delta_entropy[ni]
                 accept = results_accept[ni]
                 propose_time_worker_ms = results_propose_time_worker_ms[ni]
-                is_non_seq = results_is_non_seq[ni]
-                is_seq = not is_non_seq
-
-                cnt_seq_workers += is_seq
-                cnt_non_seq_workers += is_non_seq
 
                 #print("Got a result for index %d from pid %d" % (ni,pid))
 
@@ -650,21 +655,45 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     update_beg = timeit.default_timer()
                     update_id_cnt += 1
 
+                    # next_update = (update_id_cnt, M.nonzero(), M[M.nonzero()])
+
                     block = (proposal_cnt == N)
 
                     if lock.acquire(block=block):
-                        where_modified_shared[:] = modified[:]
 
-                        M_shared[where_modified, :] = M[where_modified, :]
-                        M_shared[:, where_modified] = M[:, where_modified]
+                        if not args.sparse_data:
+                            M_shared[where_modified, :] = M[where_modified, :]
+                            M_shared[:, where_modified] = M[:, where_modified]
+                        else:
+                            assert(0)
+                            for i in modified:
+                                M.set_axis_dict(i, 0, M(i, 0))
+                                M.set_axis_dict(i, 1, M(i, 1))
+
+                        # print("Modified fraction of id %d is %s" % (update_id_cnt, len(where_modified) / float(M.shape[0])))
+                        # print("Worker progress is %s" % (worker_progress))
+
                         block_degrees_in_shared[where_modified] = block_degrees_in[where_modified]
                         block_degrees_out_shared[where_modified] = block_degrees_out[where_modified]
                         block_degrees_shared[where_modified] = block_degrees[where_modified]
+                        block_modified_time_shared[where_modified] = update_id_cnt
 
                         partition_shared[:] = partition[:]
                         update_id_shared.value = update_id_cnt
 
+                        # shared_dict[update_id_cnt] = next_update
+
                         lock.release()
+
+                        if 0:
+                            # xxx remove
+                            min_worker_progress = np.min(worker_progress)
+                            for i in (last_purge, min_worker_progress):
+                                if i > 0:
+                                    try:
+                                        del shared_dict[i]
+                                    except KeyError:
+                                        pass
 
                         modified[where_modified] = False
 
@@ -685,7 +714,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
             print("Node propose time is %3.2f ms (master) propose time %3.2f ms (workers) merge time is %3.2f ms block sum time is %3.2f ms partition update time is %3.2f useless time is %3.2f update_shared time is %3.2f ratio propose to merge %3.2f"
               % (propose_time_ms_cum, propose_time_workers_ms_cum, merge_time_ms_cum, block_sum_time * 1e3, update_partition_time_ms_cum, t_useless * 1e3, update_shared_time * 1e3, (propose_time_ms_cum + propose_time_workers_ms_cum) / merge_time_ms_cum))
-            print("Worker update counts sequential %d non-sequential %d" % (cnt_seq_workers, cnt_non_seq_workers))
             print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.9f}".format(itr, num_nodal_moves,
                                                                                 itr_delta_entropy[itr] / float(
                                                                                     overall_entropy_cur)))
