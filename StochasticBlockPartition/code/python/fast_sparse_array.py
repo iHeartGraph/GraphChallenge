@@ -1,6 +1,5 @@
 import numpy as np
 
-
 if hasattr(dict, "viewkeys"):
     dict_keys_func = dict.viewkeys
 else:
@@ -34,6 +33,10 @@ class nonzero_dict(dict):
         return np.fromiter(dict_values_func(self), dtype=int)
     def dict_keys(self):
         return dict_keys_func(self)
+    def shared_memory_copy(self, manager):
+        d = nonzero_dict(manager.dict(self))
+        d.update(self)
+        return d
 
 class nonzero_key_value_list(object):
     def __init__(self):
@@ -146,9 +149,13 @@ nonzero_data = nonzero_dict
 
 star = slice(None, None, None)
 class fast_sparse_array(object):
-    def __init__(self, tup):
-        self.rows = [nonzero_data() for i in range(tup[0])]
-        self.cols = [nonzero_data() for i in range(tup[1])]
+    def __init__(self, tup, base_type=list):
+        if base_type is list:
+            self.rows = [nonzero_data() for i in range(tup[0])]
+            self.cols = [nonzero_data() for i in range(tup[1])]
+        elif base_type is dict:
+            self.rows = base_type({i : nonzero_data() for i in range(tup[0])})
+            self.cols = base_type({i : nonzero_data() for i in range(tup[1])})
         self.shape = tup
         self.debug = 0
         if self.debug:
@@ -194,38 +201,51 @@ class fast_sparse_array(object):
         if self.debug:
             self.M_ver.__setitem__(idx, val)
             self.verify()
-    def set_axis_dict(self, idx, axis, d_new):
+            self.verify_conistency()
+    def set_axis_dict(self, idx, axis, d_new, update=0):
         if axis == 0:
-            # for k in self.rows[idx].keys():
-            #     del self.cols[k][idx]
-            # for k,v in d.items():
-            #     self.cols[k][idx] = v
+            if 1:
+                for k in self.rows[idx].keys():
+                    del self.cols[k][idx]
+                for k,v in d_new.items():
+                    self.cols[k][idx] = v
+            else:
+                for k in self.rows[idx].dict_keys() - d_new.dict_keys():
+                    del self.cols[k][idx]
 
-            for k in self.rows[idx].dict_keys() - d_new.dict_keys():
-                del self.cols[k][idx]
+                for k,v in d_new.items():
+                    self.cols[k][idx] = v
 
-            for k,v in d_new.items():
-                self.cols[k][idx] = v
-
-            self.rows[idx] = d_new
+            if not update:
+                self.rows[idx] = d_new
+            else:
+                self.rows[idx].clear()
+                self.rows[idx].update(d_new)
 
         elif axis == 1:
-            # for k in self.cols[idx].keys():
-            #     del self.rows[k][idx]
-            # for k,v in d_new.items():
-            #     self.rows[k][idx] = v
-            # self.cols[idx] = d_new
+            if 1:
+                for k in self.cols[idx].keys():
+                    del self.rows[k][idx]
+                for k,v in d_new.items():
+                    self.rows[k][idx] = v
+            else:
+                for k in self.cols[idx].dict_keys() - d_new.dict_keys():
+                    del self.rows[k][idx]
 
-            for k in self.cols[idx].dict_keys() - d_new.dict_keys():
-                del self.rows[k][idx]
+                for k,v in d_new.items():
+                    self.rows[k][idx] = v
 
-            for k,v in d_new.items():
-                self.rows[k][idx] = v
-
-            self.cols[idx] = d_new
+            if not update:
+                self.cols[idx] = d_new
+            else:
+                self.cols[idx].clear()
+                self.cols[idx].update(d_new)
 
     def __str__(self):
-        return str(self.M_ver)
+        s = ""
+        for i in range(self.shape[0]):
+            s += str(self.rows[i]) + "\n"
+        return s
     def count_nonzero(self):
         return sum(len(d) for d in self.rows)
     def verify(self):
@@ -235,6 +255,16 @@ class fast_sparse_array(object):
                 b = self.M_ver.__getitem__((i,j))
                 if a != b:
                     raise Exception("Mismatch at element (%d %d) and values (%d %d)" % (i,j,a,b))
+    def verify_conistency(self):
+        for i in range(len(self.rows)):
+            for k in self.rows[i].dict_keys():
+                if i not in self.cols[k]:
+                    print("fail i,k",i,k)
+                assert(i in self.cols[k])
+        for i in range(len(self.cols)):
+            for k in self.cols[i].dict_keys():
+                assert(i in self.rows[k])
+
     def take(self, idx, axis):
         if axis == 0:
             return (self.rows[idx].keys(),self.rows[idx].values())
@@ -261,14 +291,18 @@ class fast_sparse_array(object):
     def shared_memory_copy(self, manager):
         # Copy to a shared memory object.
         c = fast_sparse_array(self.shape)
-        shared_rows = manager.list(self.rows)
-        shared_cols = manager.list(self.cols)
+        c.rows = [manager.dict(self.rows[i]) for i in range(c.shape[0])]
+        c.cols = [manager.dict(self.cols[i]) for i in range(c.shape[0])]
+        return c
+    def shared_memory_copy_old(self, manager):
+        # Copy to a shared memory object.
+        c = fast_sparse_array(self.shape)
+        shared_rows = manager.dict()
+        shared_cols = manager.dict()
         for i in range(c.shape[0]):
-            shared_rows[i] = manager.dict(self.rows[i])
+            c.rows[i] = self.rows[i].copy()
         for i in range(c.shape[1]):
-            shared_cols[i] = manager.dict(self.cols[i])
-        c.rows = shared_rows
-        c.cols = shared_cols
+            c.cols[i] = self.cols[i].copy()
         return c
 
 def is_sorted(x):
@@ -280,7 +314,7 @@ def take_nonzero(A, idx, axis, sort):
         idx = a.nonzero()[0]
         val = a[idx]
         return idx, val
-    elif type(A) is fast_sparse_array:
+    elif type(A) is fast_sparse_array or type(A) is fast_sparse_array_dict:
         idx,val = A.take(idx, axis)
         if sort:
             s = np.argsort(idx)

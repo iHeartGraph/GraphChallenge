@@ -17,7 +17,7 @@ from multiprocessing import sharedctypes
 import ctypes
 from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
-from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero
+from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict, fast_sparse_array
 from collections import Iterable
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
@@ -270,7 +270,7 @@ def initialize_edge_counts(out_neighbors, B, b, sparse):
         d = d_out + d_in
         print("density(M) = %s" % (len(M.nonzero()[0]) / (B ** 2.)))
     else:
-        M = fast_sparse_array((B,B))
+        M = fast_sparse_array((B,B), base_type=list)
         d_out = np.zeros(B, dtype=int)
         d_in = np.zeros(B, dtype=int)
         M_d = defaultdict(int)
@@ -398,13 +398,8 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
         if use_sparse_data:
-            # xxx convert to dict
-            M_r_row_i, M_r_row_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
-            M_r_col_i, M_r_col_v = (np.empty((0,), dtype=int), np.empty((0,), dtype=int))
-            new_M_r_row = (M_r_row_i, M_r_row_v)
-            new_M_r_col = (M_r_col_i, M_r_col_v)
-#            new_M_r_row = {}
-#            new_M_r_col = {}
+            new_M_r_row = nonzero_dict()
+            new_M_r_col = nonzero_dict()
         else:
             M_r_row = np.zeros(B, dtype=int)
             M_r_col = np.zeros(B, dtype=int)

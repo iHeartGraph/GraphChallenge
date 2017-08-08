@@ -144,7 +144,7 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
 update_id = -1
 def propose_node_movement_wrapper(tup):
 
-    global update_id, partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in
+    global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in
 
     rank,start,stop,step = tup
 
@@ -157,22 +157,49 @@ def propose_node_movement_wrapper(tup):
     if args.pipe:
         pipe = syms['pipe']
 
-    pid = current_process().pid
-
     (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
 
-    (update_id_shared, interblock_edge_count_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
+    (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
 
     lock.acquire()
 
     if update_id != update_id_shared.value:
         if update_id == -1:
-            (interblock_edge_count, partition, block_degrees, block_degrees_out, block_degrees_in) \
-                = (i.copy() for i in (interblock_edge_count_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+            (partition, block_degrees, block_degrees_out, block_degrees_in) \
+                = (i.copy() for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+
+            if not args.sparse_data:
+                M = M_shared.copy()
+            else:
+                M = fast_sparse_array(M_shared.shape)
+                for i in range(M.shape[0]):
+                    M_row = nonzero_dict(M_shared.take_dict(i, 0))
+                    M.set_axis_dict(i, 0, M_row)
+                    M_col = nonzero_dict(M_shared.take_dict(i, 1))
+                    M.set_axis_dict(i, 1, M_col)
+
+            # Ensure every worker has a different random seed.
+            pid = current_process().pid
+            numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
         else:
-            w = np.where(block_modified_time_shared > update_id)
-            interblock_edge_count[w, :] = interblock_edge_count_shared[w, :]
-            interblock_edge_count[:, w] = interblock_edge_count_shared[:, w]
+            w = np.where(block_modified_time_shared > update_id)[0]
+
+            if not use_sparse_data:
+                M[w, :] = M_shared[w, :]
+                M[:, w] = M_shared[:, w]
+            else:
+                t_copy_0 = timeit.default_timer()
+                print("Begin copying updates into worker.")
+                copy_cnt = 0
+                for i in w:
+                    M_row = nonzero_dict(M_shared.take_dict(i, 0))
+                    M_col = nonzero_dict(M_shared.take_dict(i, 1))
+                    M.set_axis_dict(i, 1, M_col)
+                    M.set_axis_dict(i, 0, M_row)
+                    copy_cnt += len(M_row) + len(M_col)
+                t_copy_1 = timeit.default_timer()
+                print("Done copying %d updates into worker after %3.5f secs." % (copy_cnt, t_copy_1 - t_copy_0))
+
             block_degrees_in[w] = block_degrees_in_shared[w]
             block_degrees_out[w] = block_degrees_out_shared[w]
             block_degrees[w] = block_degrees_shared[w]
@@ -182,15 +209,12 @@ def propose_node_movement_wrapper(tup):
 
     lock.release()
 
-    # Ensure every worker has a different random seed.
-    numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
-
     for current_node in range(start, stop, step):
 
         t0 = timeit.default_timer()
 
         res = propose_node_movement(current_node, partition, out_neighbors, in_neighbors,
-                interblock_edge_count, num_blocks, block_degrees, block_degrees_out, block_degrees_in,
+                M, num_blocks, block_degrees, block_degrees_out, block_degrees_in,
                 vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors)
 
         t1 = timeit.default_timer()
@@ -309,7 +333,7 @@ def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col):
     r = b[ni]
     b[ni] = s
 
-    if type(M) is fast_sparse_array:
+    if args.sparse_data:
         M.set_axis_dict(r, 0, M_r_row)
         M.set_axis_dict(s, 0, M_s_row)
         M.set_axis_dict(r, 1, M_r_col)
@@ -418,7 +442,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
             self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
-            (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
+            (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
                                 compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
                                                                                    blocks_out, count_out, blocks_in, count_in,
                                                                                    self_edge_weight, agg_move = 0,
@@ -426,7 +450,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
                                                                                    use_sparse_data = args.sparse_data)
 
             partition, M = update_partition_single(partition, ni, proposal, M,
-                                                   new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
+                                                   new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col)
 
             t_update_partition_end = timeit.default_timer()
 
@@ -435,10 +459,11 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             btime = timeit.default_timer()
             where_modified = np.where(modified)[0]
 
-            if 0: #type(M) is not fast_sparse_array:
+            # xxx which way is faster for non-sparse data
+            if 0: # not args.sparse_data
                 block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
                 block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
-            elif 1:
+            else:
                 for w in where_modified:
                     nz_i, nz_v = take_nonzero(M, w, 0, sort=False)
                     block_degrees_out[w] = np.sum(nz_v)
@@ -474,7 +499,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
                     delta_entropy_threshold * overall_entropy_cur)):
                     break
 
-    return total_num_nodal_moves_itr
+    return total_num_nodal_moves_itr,M
 
 
 def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy_cur, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose = False):
@@ -551,8 +576,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
             
         t_propose_start = timeit.default_timer()
 
-        propose_movement_batch_size = 10
-
         group_size = args.node_propose_batch_size
         chunks = [((i // group_size) % n_thread, i, min(i+group_size, N), 1) for i in range(0,N,group_size)]
 
@@ -625,7 +648,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
 
-                    (new_M_r_row, new_M_s_row,new_M_r_block_col, new_M_s_col) = \
+                    (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
                                         compute_new_rows_cols_interblock_edge_count_matrix(
                                             M, current_block, proposal,
                                             blocks_out, count_out, blocks_in, count_in,
@@ -633,8 +656,15 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                                             use_sparse_alg = args.sparse_algorithm,
                                             use_sparse_data = args.sparse_data)
 
+                    if 0:
+                        # Update the shared copy too.
+                        M_shared.set_axis_dict(partition[ni], 0, new_M_r_row.copy())
+                        M_shared.set_axis_dict(proposal, 0, new_M_s_row.copy())
+                        M_shared.set_axis_dict(partition[ni], 1, new_M_r_col.copy())
+                        M_shared.set_axis_dict(proposal, 1, new_M_s_col.copy())
+
                     partition, M = update_partition_single(partition, ni, proposal, M,
-                                                           new_M_r_row, new_M_s_row, new_M_r_block_col, new_M_s_col)
+                                                           new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col)
 
                     t_update_partition_end = timeit.default_timer()
 
@@ -643,8 +673,17 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                 if num_nodal_moves >= next_batch_cnt or proposal_cnt == N:
                     btime = timeit.default_timer()
                     where_modified = np.where(modified)[0]
-                    block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
-                    block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
+
+                    if 0: # not args.sparse_data
+                        block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
+                        block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
+                    else:
+                        for w in where_modified:
+                            nz_i, nz_v = take_nonzero(M, w, 0, sort=False)
+                            block_degrees_out[w] = np.sum(nz_v)
+                            nz_i, nz_v = take_nonzero(M, w, 1, sort=False)
+                            block_degrees_in[w] = np.sum(nz_v)
+
                     block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
                     next_batch_cnt = num_nodal_moves + batch_size
 
@@ -655,23 +694,30 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     update_beg = timeit.default_timer()
                     update_id_cnt += 1
 
-                    # next_update = (update_id_cnt, M.nonzero(), M[M.nonzero()])
-
                     block = (proposal_cnt == N)
 
                     if lock.acquire(block=block):
-
                         if not args.sparse_data:
                             M_shared[where_modified, :] = M[where_modified, :]
                             M_shared[:, where_modified] = M[:, where_modified]
                         else:
-                            assert(0)
-                            for i in modified:
-                                M.set_axis_dict(i, 0, M(i, 0))
-                                M.set_axis_dict(i, 1, M(i, 1))
+                            t_copy_0 = timeit.default_timer()
+                            print("Begin copying updates from main.")
+                            copy_cnt = 0
+                            for i in where_modified:
+                                M_row = M.take_dict(i, 0)
+                                M_col = M.take_dict(i, 1)
+                                # Cannot clear the row and col entries and set to new dict because
+                                # the workers will not see the changes. Must clear each shared dict
+                                # and update.
+                                M_shared.set_axis_dict(i, 0, M_row, update=1)
+                                M_shared.set_axis_dict(i, 1, M_col, update=1)
+                                copy_cnt += len(M_row) + len(M_col)
+                            t_copy_1 = timeit.default_timer()
+                            print("Done copying %d updates from main after %3.5f secs." % (copy_cnt, t_copy_1 - t_copy_0))
 
-                        # print("Modified fraction of id %d is %s" % (update_id_cnt, len(where_modified) / float(M.shape[0])))
-                        # print("Worker progress is %s" % (worker_progress))
+                        print("Modified fraction of id %d is %s" % (update_id_cnt, len(where_modified) / float(M.shape[0])))
+                        print("Worker progress is %s" % (worker_progress))
 
                         block_degrees_in_shared[where_modified] = block_degrees_in[where_modified]
                         block_degrees_out_shared[where_modified] = block_degrees_out[where_modified]
@@ -680,8 +726,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                         partition_shared[:] = partition[:]
                         update_id_shared.value = update_id_cnt
-
-                        # shared_dict[update_id_cnt] = next_update
 
                         lock.release()
 
@@ -844,7 +888,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
     if parallel_phase2 and n_thread > 0:
         total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose)
     else:
-        total_num_nodal_moves_itr = nodal_moves_sequential(batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose)
+        total_num_nodal_moves_itr,M = nodal_moves_sequential(batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose)
 
     # compute the global entropy for determining the optimal number of blocks
     overall_entropy = compute_overall_entropy(M, block_degrees_out, block_degrees_in, num_blocks, N, E)
