@@ -1406,7 +1406,8 @@ if __name__ == '__main__':
         args.sparse_algorithm = 1
 
     if args.verbose > 0:
-        print("Python version: %s" % (sys.version))
+        print("Started: " + time.asctime())
+        print("Python version: " + sys.version)
         d = vars(args)
         args_sorted = sorted([i for i in d.items()])
         print("Arguments: {" + "".join(("%s : %s, " % (k,v) for k,v in args_sorted)) + "}\n")
