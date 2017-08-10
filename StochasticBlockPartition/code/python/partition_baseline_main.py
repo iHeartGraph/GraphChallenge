@@ -56,6 +56,7 @@ def compute_best_block_merge_wrapper(tup):
     block_degrees_out = syms['block_degrees_out']
     block_degrees_in = syms['block_degrees_in']
     partition = syms['partition']
+    args = syms['args']
 
     return compute_best_block_merge(blocks, num_blocks, interblock_edge_count, block_partition, block_degrees, args.n_proposal, block_degrees_out, block_degrees_in, args)
 
@@ -148,6 +149,7 @@ def propose_node_movement_wrapper(tup):
 
     rank,start,stop,step = tup
 
+    args = syms['args']
     lock = syms['lock']
     n_thread = syms['n_thread']
 
@@ -543,6 +545,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     syms['static_state'] = static_state
     syms['n_thread'] = n_thread
     syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared)
+    syms['args'] = args
 
     if args.pipe:
         pipe = os.pipe()
@@ -799,6 +802,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         syms['block_degrees_out'] = block_degrees_out
         syms['block_degrees_in'] = block_degrees_in
         syms['partition'] = partition
+        syms['args'] = args
 
         L = range(num_blocks)
         pool_size = min(n_thread, num_blocks)
@@ -1236,7 +1240,7 @@ def do_main(args):
 
     np.seterr(all='raise')
 
-    if args.seed != -1:
+    if args.seed != 0:
         numpy.random.seed(args.seed % 4294967295)
 
     input_filename = args.input_filename
