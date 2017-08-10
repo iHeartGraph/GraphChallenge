@@ -394,7 +394,6 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
                                                        agg_move, use_sparse_alg, use_sparse_data):
 
-    verify_sparse = 0
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
         if use_sparse_data:
@@ -411,7 +410,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
 
         offset = np.sum(count_in[where_b_in_r])
 
-        if not use_sparse_alg or verify_sparse:
+        if not use_sparse_alg:
             M_r_row = M[r, :].copy()
             M_r_row[b_out] -= count_out
             M_r_row[r] -= offset
@@ -450,24 +449,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 M_r_row_v = M_r_row_v[nz]
                 new_M_r_row = (M_r_row_i, M_r_row_v)
 
-            if verify_sparse:
-                L = np.argsort(M_r_row_i)
-                M_r_row_i = M_r_row_i[L]
-                M_r_row_v = M_r_row_v[L]
-                M_r_row_i_test, M_r_row_v_test = nonzero_slice(M_r_row)
-
-                if (M_r_row_i_test.shape != M_r_row_i.shape) or (M_r_row_i_test != M_r_row_i).any():
-                    print("r = %s s = %s" % (r, s))
-                    print("indices")
-                    print(M_r_row_i)
-                    print(M_r_row_i_test)
-                    print("values")
-                    print(M_r_row_v)
-                    print(M_r_row_v_test)
-                    print("")
-                    raise Exception("Array M_r_row mismatch encountered")
-
-        if not use_sparse_alg or verify_sparse:
+        if not use_sparse_alg:
             M_r_col = M[:, r].copy()
             M_r_col[b_in] -= count_in
             M_r_col[r] -= np.sum(count_out[where_b_out_r])
@@ -507,29 +489,12 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
                 M_r_col_v = M_r_col_v[nz]
                 new_M_r_col = (M_r_col_i, M_r_col_v)
 
-            if verify_sparse:
-                L = np.argsort(M_r_col_i)
-                M_r_col_i = M_r_col_i[L]
-                M_r_col_v = M_r_col_v[L]
-                M_r_col_i_test, M_r_col_v_test = nonzero_slice(M_r_col)
-
-                if (M_r_col_i_test.shape != M_r_col_i.shape) or (M_r_col_i_test != M_r_col_i).any():
-                    print("r = %s s = %s" % (r, s))
-                    print("indices")
-                    print(M_r_col_i)
-                    print(M_r_col_i_test)
-                    print("values")
-                    print(M_r_col_v)
-                    print(M_r_col_v_test)
-                    print("")
-                    raise Exception("Array M_r_col mismatch encountered")
-
     where_b_in_s = np.where(b_in == s)
     where_b_out_s = np.where(b_out == s)
 
     # Compute M_s_row
     offset = np.sum(count_in[where_b_in_s]) + count_self
-    if not use_sparse_alg or verify_sparse:
+    if not use_sparse_alg:
         M_s_row = M[s, :].copy()
         M_s_row[b_out] += count_out
         M_s_row[r] -= offset
@@ -574,36 +539,10 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             M_s_row_v = M_s_row_v[nz]
             new_M_s_row = (M_s_row_i, M_s_row_v)
 
-        if verify_sparse:
-            L = np.argsort(M_s_row_i)
-            M_s_row_i = M_s_row_i[L]
-            M_s_row_v = M_s_row_v[L]
-            M_s_row_i_test, M_s_row_v_test = nonzero_slice(M_s_row)
-
-            if (M_s_row_i_test.shape != M_s_row_i.shape) or (M_s_row_i_test != M_s_row_i).any():
-                print("s = %s adj=%s" % (s, offset))
-                print("count_out.shape", count_out.shape)
-                print("b_out.shape", b_out.shape)
-
-                print("M_s_row_in_b_out",M_s_row_in_b_out.astype(int))
-                print(M_s_row_i)
-
-                print("Indices (actual vs. expected):")
-                print(M_s_row_i)
-                print(M_s_row_i_test)
-
-                print("Values (actual vs. expected):")
-                print(M_s_row_v)
-                print(M_s_row_v_test)
-                print("")
-
-                raise Exception("Array M_s_row mismatch encountered")
-                assert((M_s_row_v_test == M_s_row_v).all())
-
     # Compute M_s_col
     offset = np.sum(count_out[where_b_out_s]) + count_self
 
-    if not use_sparse_alg or verify_sparse:
+    if not use_sparse_alg:
         M_s_col = M[:, s].copy()
         M_s_col[b_in] += count_in
         M_s_col[r] -= offset
@@ -646,32 +585,6 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             M_s_col_i = M_s_col_i[nz]
             M_s_col_v = M_s_col_v[nz]
             new_M_s_col = (M_s_col_i, M_s_col_v)
-
-        if verify_sparse:
-            L = np.argsort(M_s_col_i)
-            M_s_col_i = M_s_col_i[L]
-            M_s_col_v = M_s_col_v[L]
-            M_s_col_i_test, M_s_col_v_test = nonzero_slice(M_s_col)
-
-            if (M_s_col_i_test.shape != M_s_col_i.shape) or (M_s_col_i_test != M_s_col_i).any():
-                print("r = %s s = %s adj=%s" % (r, s, offset))
-                print("count_in.shape", count_in.shape)
-                print("b_in.shape", b_in.shape)
-                print("b_in=",b_in)
-                print("")
-                print("M_s_col_in_b_in", M_s_col_in_b_in.astype(int))
-                print(M_s_col_i)
-                print("")
-                print("Indices (actual vs. expected):")
-                print(M_s_col_i)
-                print(M_s_col_i_test)
-                print("")
-                print("Values (actual vs. expected):")
-                print(M_s_col_v)
-                print(M_s_col_v_test)
-                print("")
-
-                raise Exception("Array M_s_col mismatch encountered")
 
     return new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col
 
