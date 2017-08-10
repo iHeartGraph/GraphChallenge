@@ -465,7 +465,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
                 block_degrees_in[s] = np.sum(new_M_s_col.values())
 
             block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
-            block_degrees[r] = block_degrees_out[s] + block_degrees_in[r]
+            block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
 
             btime_end = timeit.default_timer()
             block_sum_time += btime_end - btime
