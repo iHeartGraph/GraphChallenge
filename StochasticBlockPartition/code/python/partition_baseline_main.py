@@ -1373,8 +1373,11 @@ def do_main(args):
         t_prog_end = timeit.default_timer()
         print("Final partition search took %3.5f" % (t_final_partition_search_end - t_final_partition_search_start))
 
-    print('\nGraph partition took {} seconds'.format(t_prog_end - t_prog_start))
+    t_elapsed_partition = t_prog_end - t_prog_start
+    print('\nGraph partition took %.4f seconds' % (t_elapsed_partition))
     evaluate_partition(true_partition, partition)
+    return t_elapsed_partition
+
 
 block_sum_time_cum = 0
 # xxx global for use in merge down blocks incremental time
