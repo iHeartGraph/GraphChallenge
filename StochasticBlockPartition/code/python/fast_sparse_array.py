@@ -204,12 +204,13 @@ class fast_sparse_array(object):
             self.verify_conistency()
     def set_axis_dict(self, idx, axis, d_new, update=0):
         if axis == 0:
-            if 1:
+            if 0:
                 for k in self.rows[idx].keys():
                     del self.cols[k][idx]
                 for k,v in d_new.items():
                     self.cols[k][idx] = v
             else:
+                # Slightly faster method to minimize deletions.
                 for k in self.rows[idx].dict_keys() - d_new.dict_keys():
                     del self.cols[k][idx]
 
@@ -223,12 +224,13 @@ class fast_sparse_array(object):
                 self.rows[idx].update(d_new)
 
         elif axis == 1:
-            if 1:
+            if 0:
                 for k in self.cols[idx].keys():
                     del self.rows[k][idx]
                 for k,v in d_new.items():
                     self.rows[k][idx] = v
             else:
+                # Slightly faster method to minimize deletions.
                 for k in self.cols[idx].dict_keys() - d_new.dict_keys():
                     del self.rows[k][idx]
 
