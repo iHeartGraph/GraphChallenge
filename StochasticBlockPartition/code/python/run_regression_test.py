@@ -47,7 +47,10 @@ def outputname(args_tuple):
             v = os.path.basename(v)
         if k in shortname:
             k = shortname[k]
-        out += ('-%s%s' % (k,v))
+        if k == 't' or k == 'itr':
+            out += ('-%s%02d' % (k,v))
+        else:
+            out += ('-%s%s' % (k,v))
     return out
 
 
@@ -73,12 +76,16 @@ if __name__ == '__main__':
     input_files = ('../../data/static/simulated_blockmodel_graph_100_nodes',
                    '../../data/static/simulated_blockmodel_graph_500_nodes',
                    '../../data/static/simulated_blockmodel_graph_1000_nodes')
-    iterations = range(2)
+    iterations = range(3)
 
-    results = run_test(base_args, input_files, iterations, threads = (0,4,8,11))
+    results = run_test(base_args, input_files, iterations, threads = (0,))
 
     print("Single process tests.")
     for k,v in sorted((i for i in results.items())):
         print("%s %s" % (v[0],v[1]))
 
-    results = run_test(base_args, input_files, iterations, threads = (0,))
+    results = run_test(base_args, input_files, iterations, threads = (4,8,11))
+
+    print("Multi process tests.")
+    for k,v in sorted((i for i in results.items())):
+        print("%s %s" % (v[0],v[1]))
