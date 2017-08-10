@@ -321,7 +321,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
 
         p_accept = np.min([np.exp(-args.beta * delta_entropy) * Hastings_correction, 1])
 
-    return current_node, current_block, int(proposal), delta_entropy, p_accept
+    return current_node, current_block, proposal, delta_entropy, p_accept
 
 def coo_to_flat(x, size):
     x_i, x_v = x
@@ -402,8 +402,6 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
         proposal_cnt = 0
         update_id_cnt = 0
 
-        modified = np.zeros(M.shape[0], dtype=bool)
-
         t_merge_start = timeit.default_timer()
 
         for i in L:
@@ -416,7 +414,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
 
             proposal_cnt += 1
 
-            (ni, current_block, proposal, delta_entropy, p_accept) = movement
+            (ni, r, s, delta_entropy, p_accept) = movement
             accept = (np.random.uniform() <= p_accept)
 
             if not accept:
@@ -428,13 +426,10 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             num_nodal_moves += 1
             itr_delta_entropy[itr] += delta_entropy
 
-            modified[partition[ni]] = True
-            modified[proposal] = True
-
-            current_block = partition[ni]
+            r = partition[ni]
 
             if verbose > 2:
-                print("Move %5d from block %5d to block %5d." % (ni, current_block, proposal))
+                print("Move %5d from block %5d to block %5d." % (ni, r, s))
 
             blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
             count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
@@ -443,13 +438,13 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
             (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
-                                compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
+                                compute_new_rows_cols_interblock_edge_count_matrix(M, r, s,
                                                                                    blocks_out, count_out, blocks_in, count_in,
                                                                                    self_edge_weight, agg_move = 0,
                                                                                    use_sparse_alg = args.sparse_algorithm,
                                                                                    use_sparse_data = args.sparse_data)
 
-            partition, M = update_partition_single(partition, ni, proposal, M,
+            partition, M = update_partition_single(partition, ni, s, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col)
 
             t_update_partition_end = timeit.default_timer()
@@ -457,20 +452,21 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
 
             btime = timeit.default_timer()
-            where_modified = np.where(modified)[0]
 
-            # xxx which way is faster for non-sparse data
-            if 0: # not args.sparse_data
-                block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
-                block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
+            if not args.sparse_data:
+                block_degrees_out[r] = np.sum(new_M_r_row)
+                block_degrees_out[s] = np.sum(new_M_s_row)
+                block_degrees_in[r] = np.sum(new_M_r_col)
+                block_degrees_in[s] = np.sum(new_M_s_col)
             else:
-                for w in where_modified:
-                    nz_i, nz_v = take_nonzero(M, w, 0, sort=False)
-                    block_degrees_out[w] = np.sum(nz_v)
-                    nz_i, nz_v = take_nonzero(M, w, 1, sort=False)
-                    block_degrees_in[w] = np.sum(nz_v)
+                block_degrees_out[r] = np.sum(new_M_r_row.values())
+                block_degrees_out[s] = np.sum(new_M_s_row.values())
+                block_degrees_in[r] = np.sum(new_M_r_col.values())
+                block_degrees_in[s] = np.sum(new_M_s_col.values())
 
-            block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
+            block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+            block_degrees[r] = block_degrees_out[s] + block_degrees_in[r]
+
             btime_end = timeit.default_timer()
             block_sum_time += btime_end - btime
             block_sum_time_cum += btime_end - btime
@@ -679,10 +675,8 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                         block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
                     else:
                         for w in where_modified:
-                            nz_i, nz_v = take_nonzero(M, w, 0, sort=False)
-                            block_degrees_out[w] = np.sum(nz_v)
-                            nz_i, nz_v = take_nonzero(M, w, 1, sort=False)
-                            block_degrees_in[w] = np.sum(nz_v)
+                            block_degrees_out[w] = np.sum(M.take_dict(w, 0).values())
+                            block_degrees_in[w] = np.sum(M.take_dict(w, 1).values())
 
                     block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
                     next_batch_cnt = num_nodal_moves + batch_size
