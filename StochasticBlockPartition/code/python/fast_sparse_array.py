@@ -10,6 +10,11 @@ if hasattr(dict, "viewvalues"):
 else:
     dict_values_func = dict.values
 
+if hasattr(dict, "viewitems"):
+    dict_items_func = dict.viewitems
+else:
+    dict_items_func = dict.items
+
 class nonzero_dict(dict):
     def __setitem__(self, idx, val):
         if val == 0:
@@ -168,9 +173,9 @@ class fast_sparse_array(object):
 
         i,j = idx
         if type(i) is slice and i == star:
-            L = [(k,v) for (k,v) in self.cols[j].items()]
+            L = [(k,v) for (k,v) in dict_items_func(self.cols[j])]
         elif type(j) is slice and j == star:
-            L = [(k,v) for (k,v) in self.rows[i].items()]
+            L = [(k,v) for (k,v) in dict_items_func(self.rows[i])]
         else:
             if j in self.rows[i]:
                 L = self.rows[i][j]
@@ -207,14 +212,14 @@ class fast_sparse_array(object):
             if 0:
                 for k in self.rows[idx].keys():
                     del self.cols[k][idx]
-                for k,v in d_new.items():
+                for k,v in dict_items_func(d_new):
                     self.cols[k][idx] = v
             else:
                 # Slightly faster method to minimize deletions.
                 for k in self.rows[idx].dict_keys() - d_new.dict_keys():
                     del self.cols[k][idx]
 
-                for k,v in d_new.items():
+                for k,v in dict_items_func(d_new):
                     self.cols[k][idx] = v
 
             if not update:
@@ -227,14 +232,14 @@ class fast_sparse_array(object):
             if 0:
                 for k in self.cols[idx].keys():
                     del self.rows[k][idx]
-                for k,v in d_new.items():
+                for k,v in dict_items_func(d_new):
                     self.rows[k][idx] = v
             else:
                 # Slightly faster method to minimize deletions.
                 for k in self.cols[idx].dict_keys() - d_new.dict_keys():
                     del self.rows[k][idx]
 
-                for k,v in d_new.items():
+                for k,v in dict_items_func(d_new):
                     self.rows[k][idx] = v
 
             if not update:
