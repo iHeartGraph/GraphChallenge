@@ -1,4 +1,7 @@
-import sys, itertools, os, time
+import multiprocessing as mp
+from multiprocessing import Process
+import timeit, resource
+import sys, itertools, os, time, traceback
 from partition_baseline_main import do_main
 
 try:
@@ -54,6 +57,34 @@ def outputname(args_tuple):
     return out
 
 
+def child_func(queue, redirected_stdout, func, args):
+    rc = 0
+    t0 = timeit.default_timer()
+
+    with redirect_stdout(redirected_stdout):
+        try:
+            func(args)
+        except:
+            traceback.print_exc()
+            traceback.print_exc(file=redirected_stdout)
+            rc = 1
+
+    t1 = timeit.default_timer()
+    wall_time = t1 - t0
+    redirected_stdout.flush()
+    rusage_self = resource.getrusage(resource.RUSAGE_SELF)
+    rusage_children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    queue.put((rc, wall_time, rusage_self, rusage_children))
+    sys.exit(rc)
+
+def profile_child(redirected_stdout, func, args):
+    queue = mp.Queue()
+    p = Process(target=child_func, args=(queue, redirected_stdout, func, args))
+    p.start()
+    rc,wall_time,rusage_self,rusage_children = queue.get()
+    p.join()
+    return rc,wall_time,rusage_self,rusage_children
+
 def run_test(out_dir, base_args, input_files, iterations, threads):
     results = {}
 
@@ -66,11 +97,20 @@ def run_test(out_dir, base_args, input_files, iterations, threads):
         outname = out_dir + '/' + outputname(args_sorted)
 
         with open(outname, 'w') as f:
-            with redirect_stdout(f):
-                t_elp_part = do_main(Bunch(args))
+            print("Running " + str(args))
+            rc,t_elp,rusage_self,rusage_children = profile_child(f, do_main, Bunch(args))
+            mem_rss = rusage_self.ru_maxrss + rusage_children.ru_maxrss
 
-        results[args_sorted] = outname,t_elp_part
+            if rc == 0:
+                print("Took %3.4f seconds and used %d k maxrss" % (t_elp, mem_rss))
+                print("")
+            else:
+                print("Exception occured. Continuing.")
+                print("")
+
+        results[args_sorted] = outname,t_elp,mem_rss
     return results
+
 
 if __name__ == '__main__':
     out_dir = time.strftime("out-%Y-%m-%d")
@@ -88,7 +128,7 @@ if __name__ == '__main__':
 
     print("Single process tests.")
     for k,v in sorted((i for i in results.items())):
-        print("%s %s" % (v[0],v[1]))
+        print("%s %s" % (v[0],v[1:]))
 
     results = run_test(out_dir, base_args, input_files, iterations, threads = (4,8,11))
 
