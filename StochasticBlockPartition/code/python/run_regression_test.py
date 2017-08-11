@@ -88,7 +88,7 @@ if __name__ == '__main__':
     for k,v in sorted((i for i in results.items())):
         print("%s %s" % (v[0],v[1]))
 
-    results = run_test(base_args, input_files, iterations, threads = (4,8,11))
+    results = run_test(out_dir, base_args, input_files, iterations, threads = (4,8,11))
 
     print("Multi process tests.")
     for k,v in sorted((i for i in results.items())):
