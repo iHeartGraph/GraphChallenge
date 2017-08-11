@@ -57,7 +57,7 @@ def outputname(args_tuple):
 def run_test(out_dir, base_args, input_files, iterations, threads):
     results = {}
 
-    for input_filename,iteration,thread in itertools.product(input_files, iterations, threads):
+    for input_filename,thread,iteration in itertools.product(input_files, threads, iterations):
         args = base_args.copy()
         args['input_filename'] = input_filename
         args['threads'] = thread
