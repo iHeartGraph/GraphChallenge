@@ -79,7 +79,9 @@ if __name__ == '__main__':
 
     input_files = ('../../data/static/simulated_blockmodel_graph_100_nodes',
                    '../../data/static/simulated_blockmodel_graph_500_nodes',
-                   '../../data/static/simulated_blockmodel_graph_1000_nodes')
+                   '../../data/static/simulated_blockmodel_graph_1000_nodes',
+                   '../../data/static/simulated_blockmodel_graph_5000_nodes')
+
     iterations = range(3)
 
     results = run_test(out_dir, base_args, input_files, iterations, threads = (0,))
