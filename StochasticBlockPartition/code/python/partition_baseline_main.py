@@ -591,9 +591,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         propose_time_ms = (t_propose_end - t_propose_start) * 1e3
         propose_time_ms_cum += propose_time_ms
 
-        # xxx
-        # time.sleep(10)
-
         t_merge_start = timeit.default_timer()
 
         proposal_cnt = 0
@@ -613,10 +610,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
             worker_progress[rank] = worker_update_id
 
             for ni in range(start,stop,step):
-
                 useless_time_beg = timeit.default_timer()
 
-                proposal = results_proposal[ni]
+                s = results_proposal[ni]
                 delta_entropy = results_delta_entropy[ni]
                 accept = results_accept[ni]
                 propose_time_worker_ms = results_propose_time_worker_ms[ni]
@@ -636,13 +632,12 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     num_nodal_moves += 1
                     itr_delta_entropy[itr] += delta_entropy
 
-                    modified[partition[ni]] = True
-                    modified[proposal] = True
-
-                    current_block = partition[ni]
+                    r = partition[ni]
+                    modified[r] = True
+                    modified[s] = True
 
                     if 0:
-                        print("Move %s from block %s to block %s." % (ni, current_block, proposal))
+                        print("Move %s from block %s to block %s." % (ni, r, s))
 
                     blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
                     count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
@@ -653,20 +648,28 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                     (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
                                         compute_new_rows_cols_interblock_edge_count_matrix(
-                                            M, current_block, proposal,
+                                            M, r, s,
                                             blocks_out, count_out, blocks_in, count_in,
                                             self_edge_weight, agg_move = 0,
                                             use_sparse_alg = args.sparse_algorithm,
                                             use_sparse_data = args.sparse_data)
 
-                    if 0:
-                        # Update the shared copy too.
-                        M_shared.set_axis_dict(partition[ni], 0, new_M_r_row.copy())
-                        M_shared.set_axis_dict(proposal, 0, new_M_s_row.copy())
-                        M_shared.set_axis_dict(partition[ni], 1, new_M_r_col.copy())
-                        M_shared.set_axis_dict(proposal, 1, new_M_s_col.copy())
+                    if not args.sparse_data:
+                        block_degrees_out[r] = np.sum(new_M_r_row)
+                        block_degrees_out[s] = np.sum(new_M_s_row)
+                        block_degrees_in[r] = np.sum(new_M_r_col)
+                        block_degrees_in[s] = np.sum(new_M_s_col)
+                    else:
+                        block_degrees_out[r] = np.sum(new_M_r_row.values())
+                        block_degrees_out[s] = np.sum(new_M_s_row.values())
+                        block_degrees_in[r] = np.sum(new_M_r_col.values())
+                        block_degrees_in[s] = np.sum(new_M_s_col.values())
 
-                    partition, M = update_partition_single(partition, ni, proposal, M,
+                    block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+                    block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+
+
+                    partition, M = update_partition_single(partition, ni, s, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
 
                     t_update_partition_end = timeit.default_timer()
@@ -676,16 +679,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                 if num_nodal_moves >= next_batch_cnt or proposal_cnt == N:
                     btime = timeit.default_timer()
                     where_modified = np.where(modified)[0]
-
-                    if not args.sparse_data:
-                        block_degrees_out[where_modified] = np.sum(M[where_modified, :], axis = 1)
-                        block_degrees_in[where_modified] = np.sum(M[:, where_modified], axis = 0)
-                    else:
-                        for w in where_modified:
-                            block_degrees_out[w] = np.sum(M.take_dict(w, 0).values())
-                            block_degrees_in[w] = np.sum(M.take_dict(w, 1).values())
-
-                    block_degrees[where_modified] = block_degrees_out[where_modified] + block_degrees_in[where_modified]
                     next_batch_cnt = num_nodal_moves + batch_size
 
                     btime_end = timeit.default_timer()
@@ -1230,9 +1223,8 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
 
 
 def do_main(args):
-
     if args.verbose > 0:
-        print("Started: " + time.asctime())
+        print("Started: " + time.strftime("%a %b %d %Y %H:%M:%S %Z"))
         print("Python version: " + sys.version)
         d = vars(args)
         args_sorted = sorted([i for i in d.items()])
@@ -1242,6 +1234,8 @@ def do_main(args):
 
     if args.seed != 0:
         numpy.random.seed(args.seed % 4294967295)
+    else:
+        numpy.random.seed((os.getpid() + int(timeit.default_timer() * 1e6)) % 4294967295)
 
     input_filename = args.input_filename
     args.visualize_graph = False  # whether to plot the graph layout colored with intermediate partitions
