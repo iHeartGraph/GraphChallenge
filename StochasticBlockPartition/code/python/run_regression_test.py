@@ -54,7 +54,7 @@ def outputname(args_tuple):
     return out
 
 
-def run_test(base_args, input_files, iterations, threads):
+def run_test(out_dir, base_args, input_files, iterations, threads):
     results = {}
 
     for input_filename,iteration,thread in itertools.product(input_files, iterations, threads):
@@ -63,7 +63,7 @@ def run_test(base_args, input_files, iterations, threads):
         args['threads'] = thread
         args_sorted = tuple(sorted((i for i in args.items()))) + (('iteration', iteration),)
 
-        outname = outputname(args_sorted)
+        outname = out_dir + '/' + outputname(args_sorted)
 
         with open(outname, 'w') as f:
             with redirect_stdout(f):
@@ -73,12 +73,16 @@ def run_test(base_args, input_files, iterations, threads):
     return results
 
 if __name__ == '__main__':
+    out_dir = time.strftime("out-%Y-%m-%d")
+    try: os.mkdir(out_dir)
+    except: pass
+
     input_files = ('../../data/static/simulated_blockmodel_graph_100_nodes',
                    '../../data/static/simulated_blockmodel_graph_500_nodes',
                    '../../data/static/simulated_blockmodel_graph_1000_nodes')
     iterations = range(3)
 
-    results = run_test(base_args, input_files, iterations, threads = (0,))
+    results = run_test(out_dir, base_args, input_files, iterations, threads = (0,))
 
     print("Single process tests.")
     for k,v in sorted((i for i in results.items())):
