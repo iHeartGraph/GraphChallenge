@@ -154,18 +154,25 @@ if __name__ == '__main__':
                    '../../data/static/simulated_blockmodel_graph_1000_nodes',
                    '../../data/static/simulated_blockmodel_graph_5000_nodes')
 
-    iterations = range(56)
+    iterations = range(3)
 
-    results = run_test(out_dir, base_args, input_files[:1], iterations, threads = (0,), max_jobs = 28)
-
+    results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
     print("Single process tests.")
     for k,v in sorted((i for i in results.items())):
         print("%s %s" % (v[0],v[1:]))
 
-    sys.exit(0)
+    avg_time = sum([i[1] for i in results.values()]) / len(results)
+    print("Mean time is %s" % (avg_time))
 
     results = run_test(out_dir, base_args, input_files, iterations, threads = (4,8,11))
-
     print("Multi process tests.")
     for k,v in sorted((i for i in results.items())):
         print("%s %s" % (v[0],v[1]))
+
+    print("Sparse tests.")
+    base_args['sparse'] = 1
+    results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
+
+    print("Single process tests.")
+    for k,v in sorted((i for i in results.items())):
+        print("%s %s" % (v[0],v[1:]))
