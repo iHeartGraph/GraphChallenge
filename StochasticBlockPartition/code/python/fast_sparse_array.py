@@ -216,7 +216,7 @@ class fast_sparse_array(object):
                     self.cols[k][idx] = v
             else:
                 # Slightly faster method to minimize deletions.
-                for k in self.rows[idx].dict_keys() - d_new.dict_keys():
+                for k in dict_keys_func(self.rows[idx]) - dict_keys_func(d_new):
                     del self.cols[k][idx]
 
                 for k,v in dict_items_func(d_new):
@@ -236,7 +236,7 @@ class fast_sparse_array(object):
                     self.rows[k][idx] = v
             else:
                 # Slightly faster method to minimize deletions.
-                for k in self.cols[idx].dict_keys() - d_new.dict_keys():
+                for k in dict_keys_func(self.cols[idx]) - dict_keys_func(d_new):
                     del self.rows[k][idx]
 
                 for k,v in dict_items_func(d_new):
