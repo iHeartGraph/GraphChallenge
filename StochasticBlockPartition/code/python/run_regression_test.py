@@ -143,8 +143,12 @@ def run_test(out_dir, base_args, input_files, iterations, threads, max_jobs = 1)
 
     return results
 
+def print_results(results):
+    for k,v in sorted((i for i in results.items())):
+        print("%s %s" % (v[0],v[1:]))
 
 if __name__ == '__main__':
+    
     out_dir = time.strftime("out-%Y-%m-%d")
     try: os.mkdir(out_dir)
     except: pass
@@ -152,27 +156,43 @@ if __name__ == '__main__':
     input_files = ('../../data/static/simulated_blockmodel_graph_100_nodes',
                    '../../data/static/simulated_blockmodel_graph_500_nodes',
                    '../../data/static/simulated_blockmodel_graph_1000_nodes',
-                   '../../data/static/simulated_blockmodel_graph_5000_nodes')
+                   '../../data/static/simulated_blockmodel_graph_5000_nodes',
+                   '../../data/static/simulated_blockmodel_graph_20000_nodes',
+                   '../../data/static/simulated_blockmodel_graph_50000_nodes',
+                   '../../data/static/simulated_blockmodel_graph_100000_nodes'
+    )
 
-    iterations = range(3)
+    small_files = input_files[:3]
+    big_files = input_files[3:]
 
-    results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
-    print("Single process tests.")
-    for k,v in sorted((i for i in results.items())):
-        print("%s %s" % (v[0],v[1:]))
+    iterations = range(1)
 
-    avg_time = sum([i[1] for i in results.values()]) / len(results)
-    print("Mean time is %s" % (avg_time))
+    args = {
+        'single-small' : 1,
+        'multi-small'  : 0,
+        'single-sparse' : 0,
+        'single-big' : 0
+        }
 
-    results = run_test(out_dir, base_args, input_files, iterations, threads = (4,8,11))
-    print("Multi process tests.")
-    for k,v in sorted((i for i in results.items())):
-        print("%s %s" % (v[0],v[1]))
+    if args['single-small']:
+        results = run_test(out_dir, base_args, small_files, iterations, threads = (0,), max_jobs = 6)
+        print("Single process tests.")
+        print_results(results)
 
-    print("Sparse tests.")
-    base_args['sparse'] = 1
-    results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
+        avg_time = sum([i[1] for i in results.values()]) / len(results)
+        print("Mean time is %s" % (avg_time))
 
-    print("Single process tests.")
-    for k,v in sorted((i for i in results.items())):
-        print("%s %s" % (v[0],v[1:]))
+    if args['multi-small']:
+        results = run_test(out_dir, base_args, small_files, iterations, threads = (2,4,8,16,27,32))
+        print("Multi process tests.")
+        print_results(results)
+
+    if args['single-sparse']:
+        print("Sparse tests.")
+        base_args['sparse'] = 1
+        results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
+        print_results(results)
+
+    if args['single-big']:
+        pass
+    
