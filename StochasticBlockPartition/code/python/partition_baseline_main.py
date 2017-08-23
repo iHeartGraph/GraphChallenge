@@ -1223,7 +1223,11 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
 
 
 def do_main(args):
+    global t_prog_start
+    t_prog_start = timeit.default_timer()
+
     if args.verbose > 0:
+        print("Program start at %s sec." % (t_prog_start))
         print("Started: " + time.strftime("%a %b %d %Y %H:%M:%S %Z"))
         print("Python version: " + sys.version)
         d = vars(args)
@@ -1378,10 +1382,6 @@ def do_main(args):
 
 
 block_sum_time_cum = 0
-# xxx global for use in merge down blocks incremental time
-# does not affect overall graph partition time report
-t_prog_start = timeit.default_timer()
-print("Program start at %s sec." % (t_prog_start))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
