@@ -143,6 +143,39 @@ def run_test(out_dir, base_args, input_files, iterations, threads, max_jobs = 1)
 
     return results
 
+
+def run_sweep_test(out_dir, base_args, input_files, iterations, threads, reduction_rates, max_jobs = 1):
+    results = {}
+
+    work_list = [i for i in itertools.product(input_files, threads, iterations, reduction_rates)]
+
+    arg_list = [base_args.copy() for i in work_list]
+
+    for i,(input_filename,thread,iteration,reduction_rate) in enumerate(work_list):
+        arg_list[i]['input_filename'] = input_filename
+        arg_list[i]['threads'] = thread
+        arg_list[i]['initial_block_reduction_rate'] = reduction_rate
+        arg_list[i] = tuple(sorted((j for j in arg_list[i].items()))) + (('iteration', iteration),)
+
+    pool = NonDaemonicPool(max_jobs)
+
+    result_list = pool.map(profile_wrapper, [(out_dir, i) for i in arg_list])
+
+    for args,(outname,rc,t_elp,rusage_self,rusage_children) in zip(arg_list, result_list):
+        mem_rss = rusage_self.ru_maxrss + rusage_children.ru_maxrss
+        if rc == 0:
+            print(args)
+            print("Took %3.4f seconds and used %d k maxrss" % (t_elp, mem_rss))
+            print("")
+        else:
+            print("Exception occured. Continuing.")
+            print("")
+
+        results[i] = outname,t_elp,mem_rss
+
+    return results
+
+
 def print_results(results):
     for k,v in sorted((i for i in results.items())):
         print("%s %s" % (v[0],v[1:]))
@@ -168,10 +201,11 @@ if __name__ == '__main__':
     iterations = range(1)
 
     args = {
-        'single-small' : 1,
+        'single-small' : 0,
         'multi-small'  : 0,
         'single-sparse' : 0,
-        'single-big' : 0
+        'single-big' : 0,
+        'reduction-sweep' : 1,
         }
 
     if args['single-small']:
@@ -196,3 +230,7 @@ if __name__ == '__main__':
     if args['single-big']:
         pass
     
+    if args['reduction-sweep']:
+        results = run_sweep_test(out_dir, base_args, big_files, iterations, threads = (55,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
+        print("Single process tests.")
+        print_results(results)

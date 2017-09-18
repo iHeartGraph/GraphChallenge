@@ -918,7 +918,8 @@ def load_graph_parts(input_filename, args):
             out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available, permutate=0)
     return out_neighbors, in_neighbors, N, E, true_partition
 
-def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = False, partition_bracket = [], num_block_reduction_rate = 0.5):
+
+def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = False, partition_bracket = [], num_block_reduction_rate = 0.50):
 
     if verbose:
         print('Number of nodes: {}'.format(N))
@@ -964,7 +965,10 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
                                      args.sparse_data)
         # initialize items before iterations to find the partition with the optimal number of blocks
         hist, graph_object = initialize_partition_variables()
-        num_blocks_to_merge = int(num_blocks * num_block_reduction_rate)
+
+        initial_num_block_reduction_rate = args.initial_block_reduction_rate
+
+        num_blocks_to_merge = int(num_blocks * initial_num_block_reduction_rate)
         golden_ratio_bracked_established = False
         delta_entropy_threshold = delta_entropy_threshold1
     else:
@@ -1000,7 +1004,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in, num_blocks, num_blocks_to_merge, hist, optimal_num_blocks_found = \
                                                         prepare_for_partition_on_next_num_blocks(overall_entropy, partition, interblock_edge_count, block_degrees,
                                                                                                  block_degrees_out, block_degrees_in, num_blocks, hist,
-                                                                                                 num_block_reduction_rate)
+                                                                                                 B_rate = num_block_reduction_rate )
         print("optimal = %s" % optimal_num_blocks_found)
 
         # golden ratio bracket was previously established
@@ -1012,7 +1016,6 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
     args.n_proposal = 1
 
     while not optimal_num_blocks_found:
-
         # Must be in decreasing order because reducing by carrying out merges modifies state.
         target_blocks = [num_blocks - num_blocks_to_merge + 1, num_blocks - num_blocks_to_merge, num_blocks - num_blocks_to_merge - 1]
 
@@ -1317,17 +1320,17 @@ def do_main(args):
         decimation = 1
         t_prog_start = timeit.default_timer()
 
-        if 0:
+        if 1:
             partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = args.verbose)
         else:
-            # xxx stop
+            # Test stop and resume functionality.
             partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = True, verbose = args.verbose)
             print("")
             print("Resume bracket search.")
             print("")
             partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = args.verbose, partition_bracket = partition_bracket)
-            partition = partition_bracket[1]
 
+        partition = partition_bracket[1]
         t_prog_end = timeit.default_timer()
 
         if args.test_decimation > 0:
@@ -1402,6 +1405,7 @@ if __name__ == '__main__':
     parser.add_argument("input_filename", nargs="?", type=str, default="../../data/static/simulated_blockmodel_graph_500_nodes")
 
     # Debugging options
+    parser.add_argument("--initial-block-reduction-rate", type=float, required=False, default=0.50)
     parser.add_argument("--profile", type=str, required=False, default="")
     parser.add_argument("--pipe", type=int, required=False, default=0)
     parser.add_argument("--test-decimation", type=int, required=False, default=0)
