@@ -20,6 +20,7 @@ except:
 
 base_args = {'debug' : 0, 'decimation' : 0,
              'input_filename' : '../../data/static/simulated_blockmodel_graph_100_nodes',
+             'initial_block_reduction_rate' : 0.50,
              'merge_method' : 0, 'mpi' : 0, 'node_move_update_batch_size' : 1, 'node_propose_batch_size' : 4,
              'parallel_phase' : 3, 'parts' : 0, 'pipe' : 0, 'predecimation' : 0, 'profile' : 0, 'seed' : 0, 'sort' : 0,
              'sparse' : 0, 'sparse_algorithm' : 0, 'sparse_data' : 0, 'test_decimation' : 0, 'threads' : 0, 'verbose' : 2}
@@ -82,7 +83,7 @@ def child_func(queue, fout, func, args):
         t0 = timeit.default_timer()
 
         with redirect_stdout(fout):
-            func(args)
+            func_result = func(args)
 
         t1 = timeit.default_timer()
         wall_time = t1 - t0
@@ -95,7 +96,7 @@ def child_func(queue, fout, func, args):
         traceback.print_exc(file=fout)
         rc = 1
 
-    queue.put((rc, wall_time, rusage_self, rusage_children))
+    queue.put((rc, wall_time, rusage_self, rusage_children, func_result))
     sys.exit(rc)
 
 def profile_child(out_dir, func, args):
@@ -105,9 +106,9 @@ def profile_child(out_dir, func, args):
     queue = mp.Queue()
     p = Process(target=child_func, args=(queue, fout, func, args))
     p.start()
-    rc,wall_time,rusage_self,rusage_children = queue.get()
+    rc,wall_time,rusage_self,rusage_children,func_result = queue.get()
     p.join()
-    return outname,rc,wall_time,rusage_self,rusage_children
+    return outname,rc,wall_time,rusage_self,rusage_children,func_result
 
 def profile_wrapper(tup):
     (out_dir, args) = tup
@@ -129,17 +130,17 @@ def run_test(out_dir, base_args, input_files, iterations, threads, max_jobs = 1)
 
     result_list = pool.map(profile_wrapper, [(out_dir, i) for i in arg_list])
 
-    for args,(outname,rc,t_elp,rusage_self,rusage_children) in zip(arg_list, result_list):
+    for args,(outname,rc,t_elp,rusage_self,rusage_children,func_result) in zip(arg_list, result_list):
         mem_rss = rusage_self.ru_maxrss + rusage_children.ru_maxrss
         if rc == 0:
             print(args)
-            print("Took %3.4f seconds and used %d k maxrss" % (t_elp, mem_rss))
+            print("Took %3.4f seconds and used %d k maxrss. Function result is %s" % (t_elp, mem_rss, str(func_result)))
             print("")
         else:
             print("Exception occured. Continuing.")
             print("")
 
-        results[i] = outname,t_elp,mem_rss
+        results[i] = outname,t_elp,mem_rss,func_result
 
     return results
 
@@ -201,36 +202,44 @@ if __name__ == '__main__':
     iterations = range(1)
 
     args = {
-        'single-small' : 0,
+        'single-small' : 1,
         'multi-small'  : 0,
         'single-sparse' : 0,
         'single-big' : 0,
-        'reduction-sweep' : 1,
+        'reduction-sweep' : 0,
         }
 
+    results = {}
+
     if args['single-small']:
-        results = run_test(out_dir, base_args, small_files, iterations, threads = (0,), max_jobs = 6)
+        result = run_test(out_dir, base_args, small_files, iterations, threads = (0,), max_jobs = 6)
         print("Single process tests.")
-        print_results(results)
+        print_results(result)
+        results.update(result)
 
         avg_time = sum([i[1] for i in results.values()]) / len(results)
         print("Mean time is %s" % (avg_time))
 
     if args['multi-small']:
-        results = run_test(out_dir, base_args, small_files, iterations, threads = (2,4,8,16,27,32))
+        result = run_test(out_dir, base_args, small_files, iterations, threads = (2,4,8,16,27,32))
         print("Multi process tests.")
-        print_results(results)
+        print_results(result)
+        results.update(result)
 
     if args['single-sparse']:
         print("Sparse tests.")
         base_args['sparse'] = 1
-        results = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
-        print_results(results)
+        result = run_test(out_dir, base_args, input_files, iterations, threads = (0,), max_jobs = 6)
+        print_results(result)
+        results.update(result)
 
     if args['single-big']:
         pass
     
     if args['reduction-sweep']:
-        results = run_sweep_test(out_dir, base_args, big_files, iterations, threads = (55,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
+        # result = run_sweep_test(out_dir, base_args, big_files[0:1], iterations, threads = (4,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
+        result = run_sweep_test(out_dir, base_args, big_files, iterations, threads = (55,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
         print("Single process tests.")
-        print_results(results)
+        print_results(result)
+        results.update(result)
+

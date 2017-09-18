@@ -862,7 +862,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         extrapolated_newton = num_target_blocks[1] - 0.5 * (S[2] - S[0]) / (S[2] - S[1] - (S[1] - S[0]))
 
         if verbose:
-            print("Stopping criterion not found at %s blocks extrapolate to %s blocks derivative %s." % (num_target_blocks[1], extrapolated_newton, dS_dn))
+            print("Stopping criterion not found at %s blocks extrapolate to %s blocks derivative %s at time %4.4f." % (num_target_blocks[1], extrapolated_newton, dS_dn, timeit.default_timer() - t_prog_start))
 
         best_idx = np.argsort(overall_entropy)
         best_idx = 1 # xxx
@@ -1380,8 +1380,9 @@ def do_main(args):
 
     t_elapsed_partition = t_prog_end - t_prog_start
     print('\nGraph partition took %.4f seconds' % (t_elapsed_partition))
-    evaluate_partition(true_partition, partition)
-    return t_elapsed_partition
+
+    precision,recall = evaluate_partition(true_partition, partition)
+    return t_elapsed_partition,precision,recall
 
 
 block_sum_time_cum = 0
