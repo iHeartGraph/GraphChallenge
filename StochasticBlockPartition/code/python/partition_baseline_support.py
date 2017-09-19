@@ -349,14 +349,17 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
             Mu_col_i, Mu_col = take_nonzero(M, u, 1, sort = False)
             multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
             multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
+
             if agg_move: # force proposal to be different from current block
                 multinomial_probs[ (multinomial_choices == r) ] = 0.0
 
-            if len(multinomial_choices) == 0:
-                # the current block has no neighbors. randomly propose a different block
+            sum_multinomial_probs = multinomial_probs.sum()
+
+            if sum_multinomial_probs == 0:
+                # the current block has no (available) neighbors. randomly propose a different block
                 s2 = (r + 1 + np.random.randint(B - 1, dtype=np.int64)) % B
             else:
-                multinomial_probs /= multinomial_probs.sum()
+                multinomial_probs /= sum_multinomial_probs
                 s2 = np.random.choice(multinomial_choices, p = multinomial_probs)
                 #c = multinomial_probs.cumsum(axis=0)
                 #print("constant",(np.abs(multinomial_probs[0] - multinomial_probs) < 1e-6).all())
@@ -1150,7 +1153,7 @@ def evaluate_partition(true_b, alg_b):
     print('Number of partitions in alg. partition: {}'.format(B_b2))
 
     # populate the confusion matrix between the two partitions
-    contingency_table = np.zeros((B_b1, B_b2))
+    contingency_table = np.zeros((B_b1, B_b2), dtype=int)
     for i in range(len(alg_b)):  # evaluation based on nodes observed so far
         if true_b[i] != -1:  # do not include nodes without truth in the evaluation
             contingency_table[blocks_b1[i], blocks_b2[i]] += 1
@@ -1207,10 +1210,14 @@ def evaluate_partition(true_b, alg_b):
     sum_rowsum_choose_2 = sum(vectorized_nchoose2(rowsum))
     adjusted_rand_index = (sum_table_choose_2 - sum_rowsum_choose_2 * sum_colsum_choose_2 / num_pairs) / (
         0.5 * (sum_rowsum_choose_2 + sum_colsum_choose_2) - sum_rowsum_choose_2 * sum_colsum_choose_2 / num_pairs)
+
+    pairwise_recall = num_agreement_same / (num_same_in_b1)
+    pairwise_precision = num_agreement_same / (num_same_in_b2)
+
     print('Rand Index: {}'.format(rand_index))
     print('Adjusted Rand Index: {}'.format(adjusted_rand_index))
-    print('Pairwise Recall: {}'.format(num_agreement_same / (num_same_in_b1)))
-    print('Pairwise Precision: {}'.format(num_agreement_same / (num_same_in_b2)))
+    print('Pairwise Recall: {}'.format(pairwise_recall))
+    print('Pairwise Precision: {}'.format(pairwise_precision))
     print('\n')
 
     # compute the information theoretic metrics
@@ -1249,3 +1256,4 @@ def evaluate_partition(true_b, alg_b):
     print('Mututal informationion between truth partition and alg. partition: {}'.format(abs(MI_b1_b2)))
     print('Fraction of missed information: {}'.format(abs(fraction_missed_info)))
     print('Fraction of erroneous information: {}'.format(abs(fraction_err_info)))
+    return pairwise_precision,pairwise_recall
