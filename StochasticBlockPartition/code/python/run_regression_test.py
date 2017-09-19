@@ -59,9 +59,9 @@ shortname = {'decimation' : 'd',
              'threads' : 't',
              'verbose' : 'v'}
 
-def outputname(args_tuple):
+def outputname(args):
     out = 'out'
-    for k,v in args_tuple:
+    for k,v in args:
         if k == 'input_filename':
             v = os.path.basename(v)
         if k in shortname:
@@ -172,7 +172,48 @@ def run_sweep_test(out_dir, base_args, input_files, iterations, threads, reducti
             print("Exception occured. Continuing.")
             print("")
 
-        results[i] = outname,t_elp,mem_rss
+        results[i] = outname,t_elp,mem_rss,func_result
+
+    return results
+
+
+def update_dict(x, y):
+    x.update(y)
+    return x
+
+def run_var_test(out_dir, base_args, var_args, max_jobs = 1):
+    """
+    Run a test suite sweeping across a series of parameter values stored in the var_args dict which override the defaults in base_args.
+    """
+    results = {}
+
+    # Form the cartesian product of all values for keys arranged in alphabetical order.
+    work_list = [i for i in itertools.product(*(i[1] for i in var_args))]
+
+    # Create dicts which will override the default argument dict.
+    # The keys are (j[0] for j in var_args), but not used in a generator to avoid exhausting it prematurely.
+
+    var_args_d = ({k : v for k,v in zip((j[0] for j in var_args), i)} for i in work_list)
+    arg_list = [update_dict(base_args.copy(), d) for d in var_args_d]
+
+    # Convert to tuples (for later indexing).
+    arg_list = [tuple(sorted((j for j in i.items()))) for i in arg_list]
+
+    pool = NonDaemonicPool(max_jobs)
+
+    result_list = pool.map(profile_wrapper, [(out_dir, i) for i in arg_list])
+
+    for args,(outname,rc,t_elp,rusage_self,rusage_children,func_result) in zip(arg_list, result_list):
+        mem_rss = rusage_self.ru_maxrss + rusage_children.ru_maxrss
+        if rc == 0:
+            print(args)
+            print("Took %3.4f seconds and used %d k maxrss. Function result is %s" % (t_elp, mem_rss, str(func_result)))
+            print("")
+        else:
+            print("Exception occured. Continuing.")
+            print("")
+
+        results[args] = outname,t_elp,mem_rss,func_result
 
     return results
 
@@ -202,11 +243,11 @@ if __name__ == '__main__':
     iterations = range(1)
 
     args = {
-        'single-small' : 1,
+        'single-small' : 0,
         'multi-small'  : 0,
         'single-sparse' : 0,
         'single-big' : 0,
-        'reduction-sweep' : 0,
+        'reduction-sweep' : 1,
         }
 
     results = {}
@@ -237,9 +278,10 @@ if __name__ == '__main__':
         pass
     
     if args['reduction-sweep']:
-        # result = run_sweep_test(out_dir, base_args, big_files[0:1], iterations, threads = (4,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
-        result = run_sweep_test(out_dir, base_args, big_files, iterations, threads = (55,), max_jobs = 1, reduction_rates = (0.50,0.75,0.90,0.95,0.99))
-        print("Single process tests.")
+        print("Single var tests.")
+        # var_args = { 'initial_block_reduction_rate' : (0.50,0.75,0.90,0.95,0.99), 'threads' : (0, 55) }
+        # var_args = (('input_filename', small_files), ('iteration', range(3)))
+        var_args = (('input_filename', big_files[1:2]), ('initial_block_reduction_rate',(0.50,0.75,0.90,0.95,0.99)), ('sparse',(0,)), ('threads',(16,)), ('decimation',(8,)))
+        result = run_var_test(out_dir, base_args, var_args)
         print_results(result)
         results.update(result)
-
