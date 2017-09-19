@@ -1069,6 +1069,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
     return partition_bracket, old_interblock_edge_count[1]
 
 def find_optimal_partition_wrapper(tup):
+    args = syms['args']
     args.threads = max(1, args.threads // args.decimation)
     out_neighbors, in_neighbors, N, E, true_partition = tup
     return find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = True, verbose = min(0, args.verbose - 1))
@@ -1089,7 +1090,7 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     Process = NoDaemonProcess
 
 
-def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
+def merge_partitions(partitions, stop_pieces, out_neighbors, verbose, use_sparse_alg, use_sparse_data):
     """
     Create a unified graph block partition from the supplied partition pieces into a partiton of size stop_pieces.
     """
@@ -1122,9 +1123,9 @@ def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
         # Instead of relying on initialize_edge_counts.
 
         M, block_degrees_out, block_degrees_in, block_degrees \
-            = initialize_edge_counts(out_neighbors, B, partition, args.sparse_data)
+            = initialize_edge_counts(out_neighbors, B, partition, use_sparse_data)
 
-        if args.verbose > 2:
+        if verbose > 2:
             print("M.shape = %s, M = \n%s" % (str(M.shape),M))
 
         next_partitions = []
@@ -1133,7 +1134,10 @@ def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
             partitions[i],_ = merge_two_partitions(M, block_degrees_out, block_degrees_out, block_degrees_out,
                                                    partitions[i], partitions[i + 1],
                                                    partition_offsets[i], partition_offsets[i + 1],
-                                                   Bs[i], Bs[i + 1])
+                                                   Bs[i], Bs[i + 1],
+                                                   verbose,
+                                                   use_sparse_alg,
+                                                   use_sparse_data)
             next_partitions.append(np.concatenate((partitions[i], partitions[i+1])))
 
         partitions = next_partitions
@@ -1143,7 +1147,7 @@ def merge_partitions(partitions, stop_pieces, out_neighbors, verbose):
 
 
 
-def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition0, partition1, partition_offset_0, partition_offset_1, B0, B1):
+def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition0, partition1, partition_offset_0, partition_offset_1, B0, B1, verbose, use_sparse_alg, use_sparse_data):
     """
     Merge two partitions each from a decimated piece of the graph.
     Note
@@ -1160,8 +1164,8 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
         current_block = r + partition_offset_0
 
         # Index of non-zero block entries and their associated weights
-        in_idx, in_weight = take_nonzero(M, current_block, 1)
-        out_idx, out_weight = take_nonzero(M, current_block, 0)
+        in_idx, in_weight = take_nonzero(M, current_block, 1, sort = False)
+        out_idx, out_weight = take_nonzero(M, current_block, 0, sort = False)
 
         block_neighbors = np.concatenate((in_idx, out_idx))
         block_neighbor_weights = np.concatenate((in_weight, out_weight))
@@ -1178,8 +1182,8 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
                                                                      out_idx, out_weight,
                                                                      in_idx, in_weight,
                                                                      M[current_block, current_block], agg_move = 1,
-                                                                     use_sparse_alg = args.sparse_algorithm,
-                                                                     use_sparse_data = args.sparse_data)
+                                                                     use_sparse_alg = use_sparse_alg,
+                                                                     use_sparse_data = use_sparse_data)
 
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,
@@ -1203,7 +1207,7 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
 
     best_merge_for_each_block = np.argmin(delta_entropy, axis = 1)
 
-    if args.verbose > 2:
+    if verbose > 2:
         print("delta_entropy = \n%s" % delta_entropy)
         print("best_merge_for_each_block = %s" % best_merge_for_each_block)
 
@@ -1220,13 +1224,13 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
                                                     best_merge_for_each_block + partition_offset_1,
                                                     partition0,
                                                     num_blocks,
-                                                    num_blocks_to_merge, verbose=(args.verbose > 2))
+                                                    num_blocks_to_merge, verbose=(verbose > 2))
 
     return partition, num_blocks
 
 
 def do_main(args):
-    global t_prog_start
+    global syms, t_prog_start
     t_prog_start = timeit.default_timer()
 
     if args.verbose > 0:
@@ -1309,6 +1313,8 @@ def do_main(args):
                 print("[" + "".join(("%5d : %3d, " % (i,e,) for i,e in sorted([(e,i) for (i,e) in Counter(true_partitions[j]).items()]))) + "]\n")
 
 
+        syms = {}
+        syms['args'] = args
         pool = NonDaemonicPool(decimation)
 
         results = pool.map(find_optimal_partition_wrapper, pieces)
@@ -1352,7 +1358,7 @@ def do_main(args):
 
         # Merge all pieces into a smaller number.
         partitions = merge_partitions(partitions,
-                                      4, out_neighbors, args.verbose)
+                                      4, out_neighbors, args.verbose, args.sparse_data, args.sparse_algorithm)
 
         # Now merge all remaining pieces into one big partition and then merge down.
         Bs = [max(i) + 1 for i in partitions]
