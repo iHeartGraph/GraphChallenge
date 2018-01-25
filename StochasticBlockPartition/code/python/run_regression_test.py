@@ -281,7 +281,12 @@ if __name__ == '__main__':
         print("Single var tests.")
         # var_args = { 'initial_block_reduction_rate' : (0.50,0.75,0.90,0.95,0.99), 'threads' : (0, 55) }
         # var_args = (('input_filename', small_files), ('iteration', range(3)))
-        var_args = (('input_filename', big_files[1:2]), ('initial_block_reduction_rate',(0.50,0.75,0.90,0.95,0.99)), ('sparse',(0,)), ('threads',(16,)), ('decimation',(8,)))
+        var_args = (('input_filename', big_files[3:]), ('initial_block_reduction_rate',(0.50,0.75,0.90,0.95)), ('sparse',(0,)), ('threads',(16,)), ('decimation',(8,)))
+        result = run_var_test(out_dir, base_args, var_args)
+        print_results(result)
+        results.update(result)
+
+        var_args = (('input_filename', big_files[2:]), ('initial_block_reduction_rate',(0.50,0.75,0.90,0.95), ('sparse',(0,)), ('threads',(32,)), ('decimation',(4,))))
         result = run_var_test(out_dir, base_args, var_args)
         print_results(result)
         results.update(result)
