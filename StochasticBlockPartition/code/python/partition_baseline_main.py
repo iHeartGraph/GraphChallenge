@@ -184,9 +184,8 @@ def propose_node_movement_wrapper(tup):
             pid = current_process().pid
             numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
         else:
-            w = np.where(block_modified_time_shared > update_id)[0]
-
             if not use_sparse_data:
+                w = np.where(block_modified_time_shared > update_id)[0]
                 M[w, :] = M_shared[w, :]
                 M[:, w] = M_shared[:, w]
             else:
@@ -235,13 +234,11 @@ def propose_node_movement_sparse_wrapper(tup):
 
     global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in
 
-    rank,start,stop,step = tup
+    myrank,start,stop,step = tup
 
     args = syms['args']
     lock = syms['lock']
     n_thread = syms['n_thread']
-
-    results = syms['results']
     (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms) = syms['results']
 
     if args.pipe:
@@ -279,8 +276,9 @@ def propose_node_movement_sparse_wrapper(tup):
                 M[:, w] = M_shared[:, w]
             else:
                 # Empty queue.
-
-
+                mailbox = syms['mailbox']
+                q = mailbox[myrank]
+                (rank,worker_update_id,start,stop,step) = q.get()
 
                 # No need to copy updates here, workers message themselves.
                 # print("Begin copying updates into worker.")
@@ -325,14 +323,14 @@ def propose_node_movement_sparse_wrapper(tup):
 
     if args.pipe:
         os.write(pipe[1],
-                 rank.to_bytes(4, byteorder='little')
+                 myrank.to_bytes(4, byteorder='little')
                  + update_id.to_bytes(4, byteorder='little')
                  + start.to_bytes(4, byteorder='little')
                  + stop.to_bytes(4, byteorder='little')
                  + step.to_bytes(4, byteorder='little'))
         return
     else:
-        return rank,update_id,start,stop,step
+        return myrank,update_id,start,stop,step
 
 
 def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, interblock_edge_count, num_blocks,
@@ -644,6 +642,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared)
     syms['args'] = args
 
+    if args.sparse_data:
+        syms['mailbox'] = mailbox
+
     if args.pipe:
         pipe = os.pipe()
         try:
@@ -738,9 +739,10 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                         print("Parent move %s from block %s to block %s." % (ni, r, s))
 
                     # Also send result to every worker.
-                    for i,q in enumerate(mailbox):
-                        if rank != i:
-                            q.put(rank,worker_update_id,start,stop,step)
+                    if args.sparse_data:
+                        for i,q in enumerate(mailbox):
+                            if rank != i:
+                                q.put(rank,worker_update_id,start,stop,step)
 
                     blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
                     count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
