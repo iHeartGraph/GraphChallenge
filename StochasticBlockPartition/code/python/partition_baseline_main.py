@@ -623,7 +623,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     if args.sparse_data:
         # Do not do a shared memory copy because nodal updates will arrive via message-passing instead of a shared array.
         M_shared = M
-        # Mailboxes for messages from parent to workers.
+        # Mailboxes for messages from parent to each worker.
         mailbox = [Queue() for i in range(n_thread)]
     else:
         M_shared = shared_memory_copy(M)
@@ -737,7 +737,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     if verbose > 2:
                         print("Parent move %s from block %s to block %s." % (ni, r, s))
 
-                    # Also send result to all workers
+                    # Also send result to every worker.
                     for i,q in enumerate(mailbox):
                         if rank != i:
                             q.put(rank,worker_update_id,start,stop,step)
