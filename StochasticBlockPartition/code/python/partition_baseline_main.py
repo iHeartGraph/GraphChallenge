@@ -2,6 +2,7 @@ from partition_baseline_support import *
 import multiprocessing as mp
 import multiprocessing.pool
 from multiprocessing import Pool, Value, Semaphore, Manager, Queue, current_process
+import queue
 from functools import reduce
 import pickle
 import timeit
@@ -248,63 +249,75 @@ def propose_node_movement_sparse_wrapper(tup):
 
     (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
 
-    lock.acquire()
+    if update_id == -1:
+        (partition, block_degrees, block_degrees_out, block_degrees_in) \
+            = (i.copy() for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
 
-    if update_id != update_id_shared.value:
-        if update_id == -1:
-            (partition, block_degrees, block_degrees_out, block_degrees_in) \
-                = (i.copy() for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+        M = fast_sparse_array(M_shared.shape)
+        for i in range(M.shape[0]):
+            M_row = nonzero_dict(M_shared.take_dict(i, 0))
+            M.set_axis_dict(i, 0, M_row)
+            M_col = nonzero_dict(M_shared.take_dict(i, 1))
+            M.set_axis_dict(i, 1, M_col)
 
-            if not args.sparse_data:
-                M = M_shared.copy()
-            else:
-                M = fast_sparse_array(M_shared.shape)
-                for i in range(M.shape[0]):
-                    M_row = nonzero_dict(M_shared.take_dict(i, 0))
-                    M.set_axis_dict(i, 0, M_row)
-                    M_col = nonzero_dict(M_shared.take_dict(i, 1))
-                    M.set_axis_dict(i, 1, M_col)
+        # Ensure every worker has a different random seed.
+        pid = current_process().pid
+        numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
+        update_id = 0
+    else:
+        mailbox = syms['mailbox']
+        q = mailbox[myrank]
 
-            # Ensure every worker has a different random seed.
-            pid = current_process().pid
-            numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
-        else:
-            w = np.where(block_modified_time_shared > update_id)[0]
+        while True:
+            try:
+                update = q.get(block=False)
 
-            if not use_sparse_data:
-                M[w, :] = M_shared[w, :]
-                M[:, w] = M_shared[:, w]
-            else:
-                # Empty queue.
-                mailbox = syms['mailbox']
-                q = mailbox[myrank]
-                (rank,worker_update_id,start,stop,step) = q.get()
+                if args.verbose > 3:
+                    print("Worker %d got an update %s" % (myrank,update))
+                (rank,worker_update_id,ni,r,s) = update
 
-                # No need to copy updates here, workers message themselves.
-                # print("Begin copying updates into worker.")
-                # t_copy_0 = timeit.default_timer()
-                # print("Begin copying updates into worker.")
-                # copy_cnt = 0
-                # for i in w:
-                #     M_row = nonzero_dict(M_shared.take_dict(i, 0))
-                #     M_col = nonzero_dict(M_shared.take_dict(i, 1))
-                #     M.set_axis_dict(i, 1, M_col)
-                #     M.set_axis_dict(i, 0, M_row)
-                #     copy_cnt += len(M_row) + len(M_col)
-                # t_copy_1 = timeit.default_timer()
-                # print("Done copying %d updates into worker after %3.5f secs." % (copy_cnt, t_copy_1 - t_copy_0))
+                # xxx
+                if myrank == 0:
+                    r = partition[ni]
 
-            block_degrees_in[w] = block_degrees_in_shared[w]
-            block_degrees_out[w] = block_degrees_out_shared[w]
-            block_degrees[w] = block_degrees_shared[w]
-            partition[:] = partition_shared[:]
+                    if args.verbose > 2:
+                        print("Worker %d move remote %d from block %d to block %d." % (myrank, ni, r, s))
 
-        update_id = update_id_shared.value
+                    blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+                    count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+                    blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+                    count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+                    self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
-    lock.release()
+                    (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
+                                        compute_new_rows_cols_interblock_edge_count_matrix(
+                                            M, r, s,
+                                            blocks_out, count_out, blocks_in, count_in,
+                                            self_edge_weight, agg_move = 0,
+                                            use_sparse_alg = args.sparse_algorithm,
+                                            use_sparse_data = args.sparse_data)
+
+                    block_degrees_out[r] = np.sum(new_M_r_row.values())
+                    block_degrees_out[s] = np.sum(new_M_s_row.values())
+                    block_degrees_in[r] = np.sum(new_M_r_col.values())
+                    block_degrees_in[s] = np.sum(new_M_s_col.values())
+
+                    block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+                    block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+
+                    partition, M = update_partition_single(partition, ni, s, M,
+                                                           new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+
+            except queue.Empty:
+                print("Worker %d got an empty queue" % myrank)
+                break
+
+    if args.verbose > 3:
+        print("Propose node movement at worker %d" % (myrank,))
+
+    sys.stdout.flush()
 
     for current_node in range(start, stop, step):
-
         t0 = timeit.default_timer()
 
         res = propose_node_movement(current_node, partition, out_neighbors, in_neighbors,
@@ -320,6 +333,40 @@ def propose_node_movement_sparse_wrapper(tup):
         results_delta_entropy[ni] = delta_entropy
         results_accept[ni] = accept
         results_propose_time_worker_ms[ni] = t_elapsed_ms
+
+        if accept:
+            ni = current_node
+            r = partition[current_node]
+            s = proposal
+
+            if args.verbose > 2:
+                print("Worker %d move self %d from block %d to block %d." % (myrank, ni, r, s))
+
+            blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+            count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+            blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+            count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+            self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
+
+            (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
+                                compute_new_rows_cols_interblock_edge_count_matrix(
+                                    M, r, s,
+                                    blocks_out, count_out, blocks_in, count_in,
+                                    self_edge_weight, agg_move = 0,
+                                    use_sparse_alg = args.sparse_algorithm,
+                                    use_sparse_data = args.sparse_data)
+
+            block_degrees_out[r] = np.sum(new_M_r_row.values())
+            block_degrees_out[s] = np.sum(new_M_s_row.values())
+            block_degrees_in[r] = np.sum(new_M_r_col.values())
+            block_degrees_in[s] = np.sum(new_M_s_col.values())
+
+            block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+            block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+
+            partition, M = update_partition_single(partition, ni, s, M,
+                                                   new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+
 
     if args.pipe:
         os.write(pipe[1],
@@ -680,10 +727,10 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         group_size = args.node_propose_batch_size
         chunks = [((i // group_size) % n_thread, i, min(i+group_size, N), 1) for i in range(0,N,group_size)]
 
-        if 1:
-            movements = pool.imap_unordered(propose_node_movement_wrapper, chunks)
+        if args.sparse_data:
+            movements = pool.imap_unordered(propose_node_movement_sparse_wrapper, chunks)
         else:
-            status = [pool.apply_async(propose_node_movement_wrapper, (j,)) for j in chunks]
+            movements = pool.imap_unordered(propose_node_movement_wrapper, chunks)
 
         t_propose_end = timeit.default_timer()
         propose_time_ms = (t_propose_end - t_propose_start) * 1e3
@@ -715,8 +762,8 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                 accept = results_accept[ni]
                 propose_time_worker_ms = results_propose_time_worker_ms[ni]
 
-                if verbose > 3:
-                    print("Parent got a result for index %d from worker %d" % (ni,rank))
+                if verbose > 3 and accept:
+                    print("Parent accepted %d result from worker %d to move index %d from block %d to block %d" % (accept,rank,ni,partition[ni],s))
 
                 proposal_cnt += 1
                 propose_time_workers_ms_cum += propose_time_worker_ms
@@ -736,50 +783,60 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     modified[s] = True
 
                     if verbose > 2:
-                        print("Parent move %s from block %s to block %s." % (ni, r, s))
+                        print("Parent move %d from block %d to block %d." % (ni, r, s))
 
                     # Also send result to every worker.
                     if args.sparse_data:
                         for i,q in enumerate(mailbox):
+                            
                             if rank != i:
-                                q.put(rank,worker_update_id,start,stop,step)
+                                update = (rank,worker_update_id,ni,r,s)
+                                if verbose > 3:
+                                    print("Put update from worker %d to queue %d: %s" % (rank,i,update))
+                                q.put(update)
 
-                    blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
-                    count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
-                    blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
-                    count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
-                    self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
-
-
-                    (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
-                                        compute_new_rows_cols_interblock_edge_count_matrix(
-                                            M, r, s,
-                                            blocks_out, count_out, blocks_in, count_in,
-                                            self_edge_weight, agg_move = 0,
-                                            use_sparse_alg = args.sparse_algorithm,
-                                            use_sparse_data = args.sparse_data)
-
-                    if not args.sparse_data:
-                        block_degrees_out[r] = np.sum(new_M_r_row)
-                        block_degrees_out[s] = np.sum(new_M_s_row)
-                        block_degrees_in[r] = np.sum(new_M_r_col)
-                        block_degrees_in[s] = np.sum(new_M_s_col)
-                    else:
-                        block_degrees_out[r] = np.sum(new_M_r_row.values())
-                        block_degrees_out[s] = np.sum(new_M_s_row.values())
-                        block_degrees_in[r] = np.sum(new_M_r_col.values())
-                        block_degrees_in[s] = np.sum(new_M_s_col.values())
-
-                    block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
-                    block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+                    sys.stdout.flush()
+                    
+                    if 1:
+                        blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+                        count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+                        blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+                        count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+                        self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
 
-                    partition, M = update_partition_single(partition, ni, s, M,
-                                                           new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+                        (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
+                                            compute_new_rows_cols_interblock_edge_count_matrix(
+                                                M, r, s,
+                                                blocks_out, count_out, blocks_in, count_in,
+                                                self_edge_weight, agg_move = 0,
+                                                use_sparse_alg = args.sparse_algorithm,
+                                                use_sparse_data = args.sparse_data)
 
-                    t_update_partition_end = timeit.default_timer()
+                        if not args.sparse_data:
+                            block_degrees_out[r] = np.sum(new_M_r_row)
+                            block_degrees_out[s] = np.sum(new_M_s_row)
+                            block_degrees_in[r] = np.sum(new_M_r_col)
+                            block_degrees_in[s] = np.sum(new_M_s_col)
+                        else:
+                            block_degrees_out[r] = np.sum(new_M_r_row.values())
+                            block_degrees_out[s] = np.sum(new_M_s_row.values())
+                            block_degrees_in[r] = np.sum(new_M_r_col.values())
+                            block_degrees_in[s] = np.sum(new_M_s_col.values())
 
-                    update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
+                        block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+                        block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+
+
+                        partition, M = update_partition_single(partition, ni, s, M,
+                                                               new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+
+                        t_update_partition_end = timeit.default_timer()
+
+                        update_partition_time_ms_cum += (t_update_partition_end - t_update_partition_beg) * 1e3
+
+                if 0:
+                    print("num_nodal_moves, next_batch_cnt, proposal_cnt, N",num_nodal_moves,next_batch_cnt,proposal_cnt, N)
 
                 if num_nodal_moves >= next_batch_cnt or proposal_cnt == N:
                     btime = timeit.default_timer()
