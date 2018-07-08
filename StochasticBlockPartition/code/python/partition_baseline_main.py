@@ -146,7 +146,7 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
 update_id = -1
 def propose_node_movement_wrapper(tup):
 
-    global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in
+    global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in, mypid
 
     rank,start,stop,step = tup
 
@@ -162,24 +162,21 @@ def propose_node_movement_wrapper(tup):
 
     (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
 
-    (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
+    (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared, experimental_shared) = syms['nodal_move_state']
 
     lock.acquire()
 
     if update_id != update_id_shared.value:
         if update_id == -1:
-            (partition, block_degrees, block_degrees_out, block_degrees_in) \
-                = (i.copy() for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+            mypid = current_process().pid
 
-            if not args.sparse_data:
-                M = M_shared.copy()
-            else:
-                M = fast_sparse_array(M_shared.shape)
-                for i in range(M.shape[0]):
-                    M_row = nonzero_dict(M_shared.take_dict(i, 0))
-                    M.set_axis_dict(i, 0, M_row)
-                    M_col = nonzero_dict(M_shared.take_dict(i, 1))
-                    M.set_axis_dict(i, 1, M_col)
+            (partition, block_degrees, block_degrees_out, block_degrees_in, experimental_private) \
+                = (shared_memory_to_private(i) for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, experimental_shared))
+
+            if args.sparse_data:
+                raise Exception("Compressed data supplied to worker wrapper.")
+
+            M = M_shared.copy()
 
             # Ensure every worker has a different random seed.
             pid = current_process().pid
@@ -200,6 +197,9 @@ def propose_node_movement_wrapper(tup):
         update_id = update_id_shared.value
 
     lock.release()
+
+    if args.verbose > 3:
+        print("Rank %d pid %d start %d stop %d step %d" % (rank,mypid,start,stop,step))
 
     for current_node in range(start, stop, step):
 
@@ -228,12 +228,10 @@ def propose_node_movement_wrapper(tup):
                  + step.to_bytes(4, byteorder='little'))
         return
     else:
-        return rank,update_id,start,stop,step
-
+        return rank,mypid,update_id,start,stop,step
 
 def propose_node_movement_sparse_wrapper(tup):
-
-    global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in
+    global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in, experimental_private, mypid, mypid_idx, worker_pids
 
     myrank,start,stop,step = tup
 
@@ -242,16 +240,29 @@ def propose_node_movement_sparse_wrapper(tup):
     n_thread = syms['n_thread']
     (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms) = syms['results']
 
+    worker_pids = syms['worker_pids']
+    pid_box = syms['pid_box']
+
     if args.pipe:
         pipe = syms['pipe']
 
     (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
 
-    (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
+    (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared, experimental_shared) = syms['nodal_move_state']
+
 
     if update_id == -1:
+        mypid = current_process().pid    
+
         (partition, block_degrees, block_degrees_out, block_degrees_in) \
-            = (i.copy() for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+            = (shared_memory_to_private(i) for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
+
+        experimental_private = [0,0] #np.array([0,0], dtype=int)
+
+        mypid_idx = next(i for i,e in enumerate(worker_pids) if e == mypid)
+        print("Worker %d pid %d initial partition %s" % (myrank,mypid,partition[:10]))
+        print("Worker %d pid %d worker_pids %s mypid_idx is %d" % (myrank,mypid,worker_pids,mypid_idx))
+
 
         M = fast_sparse_array(M_shared.shape)
         for i in range(M.shape[0]):
@@ -261,27 +272,27 @@ def propose_node_movement_sparse_wrapper(tup):
             M.set_axis_dict(i, 1, M_col)
 
         # Ensure every worker has a different random seed.
-        pid = current_process().pid
-        numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
+        numpy.random.seed((mypid + int(timeit.default_timer() * 1e6)) % 4294967295)
         update_id = 0
     else:
         mailbox = syms['mailbox']
-        q = mailbox[myrank]
+        q = pid_box[mypid_idx]
 
         while True:
             try:
                 update = q.get(block=False)
+                (rank,worker_pid,worker_update_id,ni,r,s) = update
 
                 if args.verbose > 3:
-                    print("Worker %d got an update %s" % (myrank,update))
-                (rank,worker_update_id,ni,r,s) = update
+                    print("Worker %d pid %d got an update %s" % (myrank,mypid,update))
 
-                # xxx
-                if myrank == 0:
+                if 1:
+                    print("Worker %d pid %d partition %s" % (myrank, mypid, partition[:10]))
+                    print("Worker %d pid %d exp_shared %s exp_private %s" % (myrank, mypid, experimental_shared, experimental_private))
                     r = partition[ni]
 
                     if args.verbose > 2:
-                        print("Worker %d move remote %d from block %d to block %d." % (myrank, ni, r, s))
+                        print("Worker pid %d rank %d move remote %d from block %d to block %d." % (worker_pid,myrank, ni, r, s))
 
                     blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
                     count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
@@ -307,7 +318,6 @@ def propose_node_movement_sparse_wrapper(tup):
 
                     partition, M = update_partition_single(partition, ni, s, M,
                                                            new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
-
             except queue.Empty:
                 print("Worker %d got an empty queue" % myrank)
                 break
@@ -367,6 +377,12 @@ def propose_node_movement_sparse_wrapper(tup):
             partition, M = update_partition_single(partition, ni, s, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
 
+            # xxx
+            if myrank == 1:
+                print("Worker %d poison partition" % myrank)
+                experimental_private[1] = -998
+            elif myrank == 0:
+                experimental_private[0] = -999
 
     if args.pipe:
         os.write(pipe[1],
@@ -377,7 +393,7 @@ def propose_node_movement_sparse_wrapper(tup):
                  + step.to_bytes(4, byteorder='little'))
         return
     else:
-        return myrank,update_id,start,stop,step
+        return myrank,mypid,update_id,start,stop,step
 
 
 def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, interblock_edge_count, num_blocks,
@@ -521,6 +537,10 @@ def shared_memory_empty(shape, dtype='int64'):
     a = np.frombuffer(raw, dtype=dtype).reshape(shape)
     return a
 
+def shared_memory_to_private(z):
+    x = np.empty(z.shape, dtype=z.dtype)
+    x[:] = z
+    return x
 
 def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy_cur, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args):
     global block_sum_time_cum
@@ -662,14 +682,17 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     worker_progress = np.empty(n_thread, dtype=int)
     worker_progress[:] = last_purge
 
-    (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared) \
-        = (shared_memory_copy(i) for i in (partition, block_degrees, block_degrees_out, block_degrees_in))
+    experimental_parent = np.zeros(n_thread, dtype=int)
+
+    (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, experimental_shared) \
+        = (shared_memory_copy(i) for i in (partition, block_degrees, block_degrees_out, block_degrees_in, experimental_parent))
 
     if args.sparse_data:
         # Do not do a shared memory copy because nodal updates will arrive via message-passing instead of a shared array.
         M_shared = M
         # Mailboxes for messages from parent to each worker.
         mailbox = [Queue() for i in range(n_thread)]
+        pid_box = [Queue() for i in range(n_thread)]
     else:
         M_shared = shared_memory_copy(M)
 
@@ -680,17 +703,22 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     results_delta_entropy = shared_memory_empty(shape, dtype='float')
     results_accept = shared_memory_empty(shape, dtype='bool')
     results_propose_time_worker_ms = shared_memory_empty(shape, dtype='float')
+    # Sometimes a worker is mistakenly "active"
+    worker_pids = shared_memory_empty(shape=(2 * n_thread,))
+    worker_pids[:] = -1
 
     syms = {}
     syms['results'] = (results_proposal, results_delta_entropy, results_accept, results_propose_time_worker_ms)
     syms['lock'] = lock
     syms['static_state'] = static_state
     syms['n_thread'] = n_thread
-    syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared)
+    syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared, experimental_shared)
     syms['args'] = args
 
     if args.sparse_data:
         syms['mailbox'] = mailbox
+        syms['pid_box'] = pid_box
+        syms['worker_pids'] = worker_pids
 
     if args.pipe:
         pipe = os.pipe()
@@ -703,6 +731,12 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
     pool = Pool(n_thread)
     update_id_cnt = 0
+
+    worker_pids[:] = -1
+    active_children = multiprocessing.active_children()
+    for i,e in enumerate(active_children):
+        worker_pids[i] = e.pid
+    print("parent worker_pids is %s" % worker_pids)
 
     for itr in range(max_num_nodal_itr):
         num_nodal_moves = 0
@@ -748,9 +782,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
             if args.pipe:
                 buf = os.read(pipe[0], 4*5)
-                rank,worker_update_id,start,stop,step = struct.unpack('<iiiii', buf)
+                rank,worker_pid,worker_update_id,start,stop,step = struct.unpack('<iiiii', buf)
             else:
-                rank,worker_update_id,start,stop,step = movements.next()
+                rank,worker_pid,worker_update_id,start,stop,step = movements.next()
     
             worker_progress[rank] = worker_update_id
 
@@ -787,10 +821,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                     # Also send result to every worker.
                     if args.sparse_data:
-                        for i,q in enumerate(mailbox):
-                            
-                            if rank != i:
-                                update = (rank,worker_update_id,ni,r,s)
+                        for i,q in enumerate(pid_box):
+                            if worker_pid != worker_pids[i]:
+                                update = (rank,worker_pid,worker_update_id,ni,r,s)
                                 if verbose > 3:
                                     print("Put update from worker %d to queue %d: %s" % (rank,i,update))
                                 q.put(update)
@@ -869,6 +902,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                         block_modified_time_shared[where_modified] = update_id_cnt
 
                         partition_shared[:] = partition[:]
+
                         update_id_shared.value = update_id_cnt
 
                         lock.release()
@@ -903,6 +937,8 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     break
 
     pool.close()
+    pool.join()
+
     return total_num_nodal_moves_itr
 
 
