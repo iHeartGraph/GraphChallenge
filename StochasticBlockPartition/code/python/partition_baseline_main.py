@@ -1171,6 +1171,16 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
             hist, graph_object = initialize_partition_variables()
             partition = partition_bracket[0]
             num_blocks = 1 + np.max(partition)
+
+            if args.sparse == 2:
+                if num_blocks >= compressed_threshold:
+                    use_compressed = 1
+                else:
+                    use_compressed = 0
+                print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
+            else:
+                use_compressed = args.sparse_data
+
             interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
                 = initialize_edge_counts(out_neighbors, num_blocks, partition, use_compressed)
             overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
