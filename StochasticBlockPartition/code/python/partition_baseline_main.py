@@ -13,6 +13,11 @@ import numpy.random
 from compute_delta_entropy import compute_delta_entropy
 import random
 
+compressed_threshold = 5000
+
+def is_compressed(M):
+    return not isinstance(M, np.ndarray)
+
 def random_permutation(iterable, r=None):
     "Random selection from itertools.permutations(iterable, r)"
     pool = tuple(iterable)
@@ -108,9 +113,7 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
                                                     in_idx, in_weight,
                                                     M[current_block, current_block],
                                                     agg_move = 1,
-                                                    use_sparse_alg = args.sparse_algorithm,
-                                                    use_sparse_data = args.sparse_data
-                )
+                                                    use_sparse_alg = args.sparse_algorithm)
 
             # compute change in entropy / posterior
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
@@ -132,7 +135,6 @@ def compute_best_block_merge(blocks, num_blocks, M, block_partition, block_degre
                                                                 block_degrees_in,
                                                                 block_degrees_out_new,
                                                                 block_degrees_in_new)
-
         mi = np.argmin(delta_entropy)
         best_entropy = delta_entropy[mi]
         n_proposals_evaluated += n_proposal
@@ -160,7 +162,7 @@ def propose_node_movement_wrapper(tup):
     if args.pipe:
         pipe = syms['pipe']
 
-    (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
+    (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors) = syms['static_state']
 
     (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
 
@@ -238,7 +240,7 @@ def propose_node_movement_sparse_wrapper(tup):
     if args.pipe:
         pipe = syms['pipe']
 
-    (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, use_sparse_data) = syms['static_state']
+    (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors) = syms['static_state']
 
     (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared) = syms['nodal_move_state']
 
@@ -251,12 +253,15 @@ def propose_node_movement_sparse_wrapper(tup):
 
         mypid_idx = next(i for i,e in enumerate(worker_pids) if e == mypid)
 
-        M = fast_sparse_array(M_shared.shape)
-        for i in range(M.shape[0]):
-            M_row = nonzero_dict(M_shared.take_dict(i, 0))
-            M.set_axis_dict(i, 0, M_row)
-            M_col = nonzero_dict(M_shared.take_dict(i, 1))
-            M.set_axis_dict(i, 1, M_col)
+        if 1:
+            M = M_shared
+        else:
+            M = fast_sparse_array(M_shared.shape)
+            for i in range(M.shape[0]):
+                M_row = nonzero_dict(M_shared.take_dict(i, 0))
+                M.set_axis_dict(i, 0, M_row)
+                M_col = nonzero_dict(M_shared.take_dict(i, 1))
+                M.set_axis_dict(i, 1, M_col)
 
         # Ensure every worker has a different random seed.
         numpy.random.seed((mypid + int(timeit.default_timer() * 1e6)) % 4294967295)
@@ -288,8 +293,7 @@ def propose_node_movement_sparse_wrapper(tup):
                                         M, r, s,
                                         blocks_out, count_out, blocks_in, count_in,
                                         self_edge_weight, agg_move = 0,
-                                        use_sparse_alg = args.sparse_algorithm,
-                                        use_sparse_data = args.sparse_data)
+                                        use_sparse_alg = args.sparse_algorithm)
 
                 block_degrees_out[r] = np.sum(new_M_r_row.values())
                 block_degrees_out[s] = np.sum(new_M_s_row.values())
@@ -344,8 +348,7 @@ def propose_node_movement_sparse_wrapper(tup):
                                     M, r, s,
                                     blocks_out, count_out, blocks_in, count_in,
                                     self_edge_weight, agg_move = 0,
-                                    use_sparse_alg = args.sparse_algorithm,
-                                    use_sparse_data = args.sparse_data)
+                                    use_sparse_alg = args.sparse_algorithm)
 
             block_degrees_out[r] = np.sum(new_M_r_row.values())
             block_degrees_out[s] = np.sum(new_M_s_row.values())
@@ -422,8 +425,7 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
             compute_new_rows_cols_interblock_edge_count_matrix(interblock_edge_count, current_block, proposal,
                                                                blocks_out, count_out, blocks_in, count_in,
                                                                self_edge_weight, agg_move = 0,
-                                                               use_sparse_alg = args.sparse_algorithm,
-                                                               use_sparse_data = args.sparse_data)
+                                                               use_sparse_alg = args.sparse_algorithm)
 
         # compute new block degrees
         block_degrees_out_new, block_degrees_in_new, block_degrees_new = compute_new_block_degrees(
@@ -431,6 +433,10 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
             num_out_neighbor_edges,
             num_in_neighbor_edges,
             num_neighbor_edges)
+
+        # XXX
+        use_sparse_data = is_compressed(interblock_edge_count)
+        use_sparse_alg = use_sparse_data
 
         # compute the Hastings correction
         Hastings_correction = compute_Hastings_correction(blocks_out, count_out, blocks_in, count_in,
@@ -441,8 +447,8 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
                                                           new_M_r_col,
                                                           num_blocks, block_degrees,
                                                           block_degrees_new,
-                                                          use_sparse_alg = args.sparse_algorithm,
-                                                          use_sparse_data = args.sparse_data)
+                                                          use_sparse_alg,
+                                                          use_sparse_data)
 
         # compute change in entropy / posterior
         delta_entropy = compute_delta_entropy(current_block, proposal,
@@ -475,7 +481,7 @@ def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col, arg
     r = b[ni]
     b[ni] = s
 
-    if args.sparse_data:
+    if is_compressed(M):
         M.set_axis_dict(r, 0, M_r_row)
         M.set_axis_dict(s, 0, M_s_row)
         M.set_axis_dict(r, 1, M_r_col)
@@ -589,8 +595,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
                                 compute_new_rows_cols_interblock_edge_count_matrix(M, r, s,
                                                                                    blocks_out, count_out, blocks_in, count_in,
                                                                                    self_edge_weight, agg_move = 0,
-                                                                                   use_sparse_alg = args.sparse_algorithm,
-                                                                                   use_sparse_data = args.sparse_data)
+                                                                                   use_sparse_alg = args.sparse_algorithm)
 
             partition, M = update_partition_single(partition, ni, s, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
@@ -601,7 +606,7 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
 
             btime = timeit.default_timer()
 
-            if not args.sparse_data:
+            if not is_compressed(M):
                 block_degrees_out[r] = np.sum(new_M_r_row)
                 block_degrees_out[s] = np.sum(new_M_s_row)
                 block_degrees_in[r] = np.sum(new_M_r_col)
@@ -667,7 +672,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared) \
         = (shared_memory_copy(i) for i in (partition, block_degrees, block_degrees_out, block_degrees_in, ))
 
-    if args.sparse_data:
+    if is_compressed(M):
         # Do not do a shared memory copy because nodal updates will arrive via message-passing instead of a shared array.
         M_shared = M
         # Mailboxes for messages from parent to each worker.
@@ -675,7 +680,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     else:
         M_shared = shared_memory_copy(M)
 
-    static_state = (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, args.sparse_data)
+    static_state = (num_blocks, out_neighbors, in_neighbors, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors)
 
     shape = partition.shape
     results_proposal = shared_memory_empty(shape)
@@ -694,7 +699,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     syms['nodal_move_state'] = (update_id_shared, M_shared, partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared, block_modified_time_shared)
     syms['args'] = args
 
-    if args.sparse_data:
+    if is_compressed(M):
         syms['pid_box'] = pid_box
         syms['worker_pids'] = worker_pids
 
@@ -710,10 +715,11 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     pool = Pool(n_thread)
     update_id_cnt = 0
 
-    worker_pids[:] = -1
-    active_children = multiprocessing.active_children()
-    for i,e in enumerate(active_children):
-        worker_pids[i] = e.pid
+    if is_compressed(M):
+        worker_pids[:] = -1
+        active_children = multiprocessing.active_children()
+        for i,e in enumerate(active_children):
+            worker_pids[i] = e.pid
 
     for itr in range(max_num_nodal_itr):
         num_nodal_moves = 0
@@ -738,7 +744,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
         group_size = args.node_propose_batch_size
         chunks = [((i // group_size) % n_thread, i, min(i+group_size, N), 1) for i in range(0,N,group_size)]
 
-        if args.sparse_data:
+        if is_compressed(M):
             movements = pool.imap_unordered(propose_node_movement_sparse_wrapper, chunks)
         else:
             movements = pool.imap_unordered(propose_node_movement_wrapper, chunks)
@@ -809,10 +815,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                                                 M, r, s,
                                                 blocks_out, count_out, blocks_in, count_in,
                                                 self_edge_weight, agg_move = 0,
-                                                use_sparse_alg = args.sparse_algorithm,
-                                                use_sparse_data = args.sparse_data)
+                                                use_sparse_alg = args.sparse_algorithm)
 
-                        if not args.sparse_data:
+                        if not is_compressed(M):
                             block_degrees_out[r] = np.sum(new_M_r_row)
                             block_degrees_out[s] = np.sum(new_M_s_row)
                             block_degrees_in[r] = np.sum(new_M_r_col)
@@ -852,7 +857,7 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     block = (proposal_cnt == N)
 
                     if lock.acquire(block=block):
-                        if not args.sparse_data:
+                        if not is_compressed(M):
                             M_shared[where_modified, :] = M[where_modified, :]
                             M_shared[:, where_modified] = M[:, where_modified]
                         else:
@@ -975,10 +980,22 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
                                                             num_blocks, num_blocks_to_merge)
 
         # re-initialize edge counts and block degrees
-        M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = initialize_edge_counts(out_neighbors,
-                                                                                               num_blocks_t,
-                                                                                               partition_t,
-                                                                                               args.sparse_data)
+
+        if args.sparse == 2:
+            if num_blocks >= compressed_threshold:
+                use_compressed = 1
+            else:
+                use_compressed = 0
+            print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
+        else:
+            use_compressed = args.sparse_data
+
+        M_t, block_degrees_out_t, block_degrees_in_t, block_degrees_t = \
+                initialize_edge_counts(out_neighbors,
+                                       num_blocks_t,
+                                       partition_t,
+                                       use_compressed)
+
         # compute the global entropy for MCMC convergence criterion
         overall_entropy = compute_overall_entropy(M_t, block_degrees_out_t, block_degrees_in_t, num_blocks_t, N,
                                                   E)
@@ -1097,12 +1114,21 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         num_blocks = N
         partition = np.arange(num_blocks, dtype=int)
 
+        if args.sparse == 2:
+            if num_blocks >= compressed_threshold:
+                use_compressed = 1
+            else:
+                use_compressed = 0
+            print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
+        else:
+            use_compressed = args.sparse_data
+
         # initialize edge counts and block degrees
         interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
             = initialize_edge_counts(out_neighbors,
                                      num_blocks,
                                      partition,
-                                     args.sparse_data)
+                                     use_compressed)
         # initialize items before iterations to find the partition with the optimal number of blocks
         hist, graph_object = initialize_partition_variables()
 
@@ -1119,8 +1145,18 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
             for partition in partition_bracket:
                 num_blocks = 1 + np.max(partition)
+
+                if args.sparse == 2:
+                    if num_blocks >= compressed_threshold:
+                        use_compressed = 1
+                    else:
+                        use_compressed = 0
+                    print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
+                else:
+                    use_compressed = args.sparse_data
+
                 interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                    = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse_data)
+                    = initialize_edge_counts(out_neighbors, num_blocks, partition, use_compressed)
 
                 overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
 
@@ -1136,7 +1172,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
             partition = partition_bracket[0]
             num_blocks = 1 + np.max(partition)
             interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse_data)
+                = initialize_edge_counts(out_neighbors, num_blocks, partition, use_compressed)
             overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
             
 
@@ -1322,8 +1358,7 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
                                                                      out_idx, out_weight,
                                                                      in_idx, in_weight,
                                                                      M[current_block, current_block], agg_move = 1,
-                                                                     use_sparse_alg = use_sparse_alg,
-                                                                     use_sparse_data = use_sparse_data)
+                                                                     use_sparse_alg = use_sparse_alg)
 
             block_degrees_out_new, block_degrees_in_new, block_degrees_new \
                 = compute_new_block_degrees(current_block,

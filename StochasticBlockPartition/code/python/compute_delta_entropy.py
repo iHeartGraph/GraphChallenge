@@ -82,22 +82,34 @@ def compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_
     if getattr(M_r_row, "keys", None) is not None:
         M_r_row_i, M_r_row = M_r_row.keys(), M_r_row.values()
     else:
-        M_r_row_i, M_r_row = nonzero_slice(M_r_row, sort=False)
+        if isinstance(M_r_row, tuple):
+            M_r_row_i, M_r_row = M_r_row
+        else:
+            M_r_row_i, M_r_row = nonzero_slice(M_r_row, sort=False)
 
     if getattr(M_r_col, "keys", None) is not None:
         M_r_col_i, M_r_col = M_r_col.keys(), M_r_col.values()
     else:
-        M_r_col_i, M_r_col = nonzero_slice(M_r_col, sort=False)
+        if isinstance(M_r_col, tuple):
+            M_r_col_i, M_r_col = M_r_col
+        else:
+            M_r_col_i, M_r_col = nonzero_slice(M_r_col, sort=False)
 
     if getattr(M_s_row, "keys", None) is not None:
         M_s_row_i, M_s_row = M_s_row.keys(), M_s_row.values()
     else:
-        M_s_row_i, M_s_row = nonzero_slice(M_s_row, sort=False)
+        if isinstance(M_s_row, tuple):
+            M_s_row_i, M_s_row = M_s_row
+        else:
+            M_s_row_i, M_s_row = nonzero_slice(M_s_row, sort=False)
 
     if getattr(M_s_col, "keys", None) is not None:
         M_s_col_i, M_s_col = M_s_col.keys(), M_s_col.values()
     else:
-        M_s_col_i, M_s_col = nonzero_slice(M_s_col, sort=False)
+        if isinstance(M_s_col, tuple):
+            M_s_col_i, M_s_col = M_s_col
+        else:
+            M_s_col_i, M_s_col = nonzero_slice(M_s_col, sort=False)
 
     # remove r and s from the cols to avoid double counting
     # only keep non-zero entries to avoid unnecessary computation

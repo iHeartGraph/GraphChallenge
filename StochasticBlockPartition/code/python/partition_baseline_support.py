@@ -395,7 +395,10 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
-                                                       agg_move, use_sparse_alg, use_sparse_data):
+                                                       agg_move, use_sparse_alg):
+
+    use_sparse_alg = not isinstance(M, np.ndarray)
+    use_sparse_data = not isinstance(M, np.ndarray)
 
     B = M.shape[0]
     if agg_move:  # the r row and column are simply empty after this merge move
