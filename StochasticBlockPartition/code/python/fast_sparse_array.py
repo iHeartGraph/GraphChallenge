@@ -5,10 +5,6 @@ if hasattr(dict, "viewkeys"):
 else:
     dict_keys_func = dict.keys
 
-# For DictProxy
-#def dict_keys_func(d):
-#    return d.keys()
-
 if hasattr(dict, "viewvalues"):
     dict_values_func = dict.viewvalues
 else:
@@ -42,8 +38,6 @@ class nonzero_dict(dict):
         return np.fromiter(dict_values_func(self), dtype=int)
     def dict_keys(self):
         return dict_keys_func(self)
-    def shared_memory_keys(self, manager):
-        return np.fromiter(manager.keys(self), dtype=int)
 
 class nonzero_key_value_list(object):
     def __init__(self):
@@ -292,26 +286,6 @@ class fast_sparse_array(object):
         c = fast_sparse_array(self.shape)
         if self.debug:
             c.M_ver = self.M_ver.copy()
-        for i in range(c.shape[0]):
-            c.rows[i] = self.rows[i].copy()
-        for i in range(c.shape[1]):
-            c.cols[i] = self.cols[i].copy()
-        return c
-    def shared_memory_copy(self, manager):
-        # Copy to a shared memory object.
-        c = fast_sparse_array(self.shape)
-        c.rows = [manager.dict(self.rows[i]) for i in range(c.shape[0])]
-        c.cols = [manager.dict(self.cols[i]) for i in range(c.shape[0])]
-        for i in c.rows:
-            i.keys = i.shared_memory_keys
-        for i in c.cols:
-            i.keys = i.shared_memory_keys
-        return c
-    def shared_memory_copy_old(self, manager):
-        # Copy to a shared memory object.
-        c = fast_sparse_array(self.shape)
-        shared_rows = manager.dict()
-        shared_cols = manager.dict()
         for i in range(c.shape[0]):
             c.rows[i] = self.rows[i].copy()
         for i in range(c.shape[1]):
