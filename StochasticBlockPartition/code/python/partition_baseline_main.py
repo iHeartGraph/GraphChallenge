@@ -168,26 +168,18 @@ def propose_node_movement_wrapper(tup):
 
     if update_id != update_id_shared.value:
         if update_id == -1:
-            mypid = current_process().pid
-
             (partition, block_degrees, block_degrees_out, block_degrees_in) \
                 = (shared_memory_to_private(i) for i in (partition_shared, block_degrees_shared, block_degrees_out_shared, block_degrees_in_shared))
-
-            if args.sparse_data:
-                raise Exception("Compressed data supplied to worker wrapper.")
 
             M = M_shared.copy()
 
             # Ensure every worker has a different random seed.
-            pid = current_process().pid
-            numpy.random.seed((pid + int(timeit.default_timer() * 1e6)) % 4294967295)
+            mypid = current_process().pid
+            numpy.random.seed((mypid + int(timeit.default_timer() * 1e6)) % 4294967295)
         else:
-            if not use_sparse_data:
-                w = np.where(block_modified_time_shared > update_id)[0]
-                M[w, :] = M_shared[w, :]
-                M[:, w] = M_shared[:, w]
-            else:
-                raise Exception("Compressed data supplied to worker wrapper.")
+            w = np.where(block_modified_time_shared > update_id)[0]
+            M[w, :] = M_shared[w, :]
+            M[:, w] = M_shared[:, w]
 
             block_degrees_in[w] = block_degrees_in_shared[w]
             block_degrees_out[w] = block_degrees_out_shared[w]
@@ -259,10 +251,6 @@ def propose_node_movement_sparse_wrapper(tup):
 
         mypid_idx = next(i for i,e in enumerate(worker_pids) if e == mypid)
 
-        #print("Worker %d pid %d initial partition %s" % (myrank,mypid,partition[:10]))
-        #print("Worker %d pid %d worker_pids %s mypid_idx is %d" % (myrank,mypid,worker_pids,mypid_idx))
-
-
         M = fast_sparse_array(M_shared.shape)
         for i in range(M.shape[0]):
             M_row = nonzero_dict(M_shared.take_dict(i, 0))
@@ -284,45 +272,41 @@ def propose_node_movement_sparse_wrapper(tup):
                 if args.verbose > 3:
                     print("Worker %d pid %d got an update %s" % (myrank,mypid,update))
 
-                if 1:
-                    #print("Worker %d pid %d partition %s" % (myrank, mypid, partition[:10]))
-                    r = partition[ni]
+                r = partition[ni]
 
-                    if args.verbose > 2:
-                        print("Worker pid %d rank %d move remote %d from block %d to block %d." % (worker_pid,myrank, ni, r, s))
+                if args.verbose > 2:
+                    print("Worker pid %d rank %d move remote %d from block %d to block %d." % (worker_pid,myrank, ni, r, s))
 
-                    blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
-                    count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
-                    blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
-                    count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
-                    self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
+                blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
+                count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
+                blocks_in, inverse_idx_in = np.unique(partition[in_neighbors[ni][:, 0]], return_inverse=True)
+                count_in = np.bincount(inverse_idx_in, weights=in_neighbors[ni][:, 1]).astype(int)
+                self_edge_weight = np.sum(out_neighbors[ni][np.where(out_neighbors[ni][:, 0] == ni), 1])
 
-                    (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
-                                        compute_new_rows_cols_interblock_edge_count_matrix(
-                                            M, r, s,
-                                            blocks_out, count_out, blocks_in, count_in,
-                                            self_edge_weight, agg_move = 0,
-                                            use_sparse_alg = args.sparse_algorithm,
-                                            use_sparse_data = args.sparse_data)
+                (new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col) = \
+                                    compute_new_rows_cols_interblock_edge_count_matrix(
+                                        M, r, s,
+                                        blocks_out, count_out, blocks_in, count_in,
+                                        self_edge_weight, agg_move = 0,
+                                        use_sparse_alg = args.sparse_algorithm,
+                                        use_sparse_data = args.sparse_data)
 
-                    block_degrees_out[r] = np.sum(new_M_r_row.values())
-                    block_degrees_out[s] = np.sum(new_M_s_row.values())
-                    block_degrees_in[r] = np.sum(new_M_r_col.values())
-                    block_degrees_in[s] = np.sum(new_M_s_col.values())
+                block_degrees_out[r] = np.sum(new_M_r_row.values())
+                block_degrees_out[s] = np.sum(new_M_s_row.values())
+                block_degrees_in[r] = np.sum(new_M_r_col.values())
+                block_degrees_in[s] = np.sum(new_M_s_col.values())
 
-                    block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
-                    block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
+                block_degrees[s] = block_degrees_out[s] + block_degrees_in[s]
+                block_degrees[r] = block_degrees_out[r] + block_degrees_in[r]
 
-                    partition, M = update_partition_single(partition, ni, s, M,
-                                                           new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+                partition, M = update_partition_single(partition, ni, s, M,
+                                                       new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+
             except queue.Empty:
-                #print("Worker %d got an empty queue" % myrank)
                 break
 
     if args.verbose > 3:
         print("Propose node movement at worker %d" % (myrank,))
-
-    sys.stdout.flush()
 
     for current_node in range(start, stop, step):
         t0 = timeit.default_timer()
