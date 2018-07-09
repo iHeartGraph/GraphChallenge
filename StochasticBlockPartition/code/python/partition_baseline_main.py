@@ -373,6 +373,15 @@ def propose_node_movement_sparse_wrapper(tup):
 
             partition, M = update_partition_single(partition, ni, s, M,
                                                    new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
+
+            # Also send result to every worker.
+            for i,q in enumerate(pid_box):
+                if mypid != worker_pids[i] and worker_pids[i] != -1:
+                    update = (myrank,mypid,update_id,ni,r,s)
+                    if args.verbose > 3:
+                        print("Put update from worker %d to queue %d: %s" % (myrank,mypid,update))
+                    q.put(update)
+
     if args.pipe:
         os.write(pipe[1],
                  myrank.to_bytes(4, byteorder='little')
@@ -721,7 +730,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
     active_children = multiprocessing.active_children()
     for i,e in enumerate(active_children):
         worker_pids[i] = e.pid
-    print("parent worker_pids is %s" % worker_pids)
 
     for itr in range(max_num_nodal_itr):
         num_nodal_moves = 0
@@ -804,17 +812,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     if verbose > 2:
                         print("Parent move %d from block %d to block %d." % (ni, r, s))
 
-                    # Also send result to every worker.
-                    if args.sparse_data:
-                        for i,q in enumerate(pid_box):
-                            if worker_pid != worker_pids[i]:
-                                update = (rank,worker_pid,worker_update_id,ni,r,s)
-                                if verbose > 3:
-                                    print("Put update from worker %d to queue %d: %s" % (rank,i,update))
-                                q.put(update)
-
-                    sys.stdout.flush()
-                    
                     if 1:
                         blocks_out, inverse_idx_out = np.unique(partition[out_neighbors[ni][:, 0]], return_inverse=True)
                         count_out = np.bincount(inverse_idx_out, weights=out_neighbors[ni][:, 1]).astype(int)
