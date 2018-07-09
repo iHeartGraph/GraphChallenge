@@ -919,7 +919,6 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
                     break
 
     pool.close()
-    pool.join()
 
     return total_num_nodal_moves_itr
 
