@@ -2,7 +2,6 @@ from partition_baseline_support import *
 import multiprocessing as mp
 import multiprocessing.pool
 from multiprocessing import Pool, Value, Semaphore, Manager, Queue, current_process
-import queue
 from functools import reduce
 import pickle
 import timeit
@@ -12,6 +11,7 @@ import traceback
 import numpy.random
 from compute_delta_entropy import compute_delta_entropy
 import random
+import shutil
 
 compressed_threshold = 5000
 
@@ -1436,7 +1436,11 @@ def do_main(args):
     input_filename = args.input_filename
     args.visualize_graph = False  # whether to plot the graph layout colored with intermediate partitions
 
-    np.set_printoptions(linewidth=159)
+    try:
+        cols,lines = shutil.get_terminal_size()
+        np.set_printoptions(linewidth=cols)
+    except AttributeError:
+        pass
 
     out_neighbors, in_neighbors, N, E, true_partition = load_graph_parts(input_filename, args)
 
