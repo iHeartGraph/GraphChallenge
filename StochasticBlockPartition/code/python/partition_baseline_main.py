@@ -1428,7 +1428,6 @@ def do_main(args):
                                    strm_piece_num=part,
                                    out_neighbors=None,
                                    in_neighbors=None)
-
                 min_number_blocks = N / 2
             else:
                 # Load true_partition here so the sizes of the arrays all equal N.
@@ -1463,8 +1462,9 @@ def do_main(args):
 
             print('Running partition for %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
 
-            if part == 9:
-                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = 0)
+            if part > 1:
+                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
+                min_number_blocks /= 2
                 precision,recall = evaluate_partition(true_partition, partition)
 
 
