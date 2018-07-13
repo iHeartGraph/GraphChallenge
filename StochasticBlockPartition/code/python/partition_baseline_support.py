@@ -106,7 +106,10 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         out_neighbors = [[] for i in range(N)]
         in_neighbors = [[] for i in range(N)]
     else:  # add to previously loaded streaming pieces
-        N = max(edge_rows[:, 0:2].max(), len(out_neighbors))  # number of nodes
+        # xxx np.int64 is here to handle a comparison later in prepare_for_partition_on_next_num_blocks
+        # that comparese old_B[1] > B, and old_B[1] is []
+        #
+        N = max(edge_rows[:, 0:2].max(), np.int64(len(out_neighbors)))  # number of nodes
         out_neighbors = [list(out_neighbors[i]) for i in range(len(out_neighbors))]
         out_neighbors.extend([[] for i in range(N - len(out_neighbors))])
         in_neighbors = [list(in_neighbors[i]) for i in range(len(in_neighbors))]
@@ -222,7 +225,7 @@ def initialize_partition_variables():
     return hist, graph_object
 
 
-def initialize_edge_counts(out_neighbors, B, b, sparse):
+def initialize_edge_counts(out_neighbors, B, b, sparse, verbose=0):
     """Initialize the edge count matrix and block degrees according to the current partition
 
         Parameters
@@ -250,9 +253,10 @@ def initialize_edge_counts(out_neighbors, B, b, sparse):
         -----
         Compute the edge count matrix and the block degrees from scratch"""
 
-    import time
-    print("Initialize edge counts for size %d" % (B))
-    t0 = time.time()
+    if verbose > 0:
+        import time
+        print("Initialize edge counts for size %d" % (B))
+        t0 = time.time()
 
     if not sparse:
         M = np.zeros((B,B), dtype=int)
@@ -268,7 +272,8 @@ def initialize_edge_counts(out_neighbors, B, b, sparse):
         d_out = np.asarray(M.sum(axis=1)).ravel()
         d_in = np.asarray(M.sum(axis=0)).ravel()
         d = d_out + d_in
-        print("density(M) = %s" % (len(M.nonzero()[0]) / (B ** 2.)))
+        if verbose > 0:
+            print("density(M) = %s" % (len(M.nonzero()[0]) / (B ** 2.)))
     else:
         M = fast_sparse_array((B,B), base_type=list)
         d_out = np.zeros(B, dtype=int)
@@ -287,9 +292,9 @@ def initialize_edge_counts(out_neighbors, B, b, sparse):
             d_out[i] += w
         d = d_out + d_in
 
-    t1 = time.time()
-
-    print("M initialization took %s" % (t1-t0))
+    if verbose > 0:
+        t1 = time.time()
+        print("M initialization took %s" % (t1-t0))
 
     return M, d_out, d_in, d
 

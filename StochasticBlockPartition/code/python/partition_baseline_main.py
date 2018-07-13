@@ -1076,11 +1076,10 @@ def load_graph_parts(input_filename, args):
     return out_neighbors, in_neighbors, N, E, true_partition
 
 
-def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = False, partition_bracket = [], num_block_reduction_rate = 0.50):
+def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = 0, alg_state = None, num_block_reduction_rate = 0.50, min_number_blocks = 0):
 
-    if verbose:
-        print('Number of nodes: {}'.format(N))
-        print('Number of edges: {}'.format(E))
+    if verbose > -1:
+        print('Number of nodes %d edges %d ' % (N,E))
 
     # partition update parameters
     args.beta = 3.0  # exploitation versus exploration (higher value favors exploitation)
@@ -1109,7 +1108,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
     optimal_num_blocks_found = False
 
-    if not partition_bracket:
+    if not alg_state:
         # initialize by putting each node in its own block (N blocks)
         num_blocks = N
         partition = np.arange(num_blocks, dtype=int)
@@ -1139,63 +1138,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         delta_entropy_threshold = delta_entropy_threshold1
     else:
         # resume search from a previous partition state
-        if len(partition_bracket) == 3:
-            (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) \
-                = ([], [], [], [], [], [], [])
-
-            for partition in partition_bracket:
-                num_blocks = 1 + np.max(partition)
-
-                if args.sparse == 2:
-                    if num_blocks >= compressed_threshold:
-                        use_compressed = 1
-                    else:
-                        use_compressed = 0
-                    print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
-                else:
-                    use_compressed = args.sparse_data
-
-                interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                    = initialize_edge_counts(out_neighbors, num_blocks, partition, use_compressed)
-
-                overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
-
-                for i,j in zip((partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in, overall_entropy, num_blocks),
-                        (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks)):
-                    j.append(i)
-
-                print("Resuming with num_blocks = %s overall_entropy = %s" % (old_num_blocks, old_overall_entropy))
-                hist = (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks)
-
-        elif len(partition_bracket) == 1:
-            hist, graph_object = initialize_partition_variables()
-            partition = partition_bracket[0]
-            num_blocks = 1 + np.max(partition)
-
-            if args.sparse == 2:
-                if num_blocks >= compressed_threshold:
-                    use_compressed = 1
-                else:
-                    use_compressed = 0
-                print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
-            else:
-                use_compressed = args.sparse_data
-
-            interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
-                = initialize_edge_counts(out_neighbors, num_blocks, partition, use_compressed)
-            overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
-            
-
-        print("optimal = %s num_blocks = %s" % (optimal_num_blocks_found, num_blocks))
-        partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in, num_blocks, num_blocks_to_merge, hist, optimal_num_blocks_found = \
-                                                        prepare_for_partition_on_next_num_blocks(overall_entropy, partition, interblock_edge_count, block_degrees,
-                                                                                                 block_degrees_out, block_degrees_in, num_blocks, hist,
-                                                                                                 B_rate = num_block_reduction_rate )
-        print("optimal = %s" % optimal_num_blocks_found)
-
-        # golden ratio bracket was previously established
-        golden_ratio_bracked_established = False
-        delta_entropy_threshold = delta_entropy_threshold2
+        (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracked_established,delta_entropy_threshold,num_blocks_to_merge) = alg_state
 
     n_proposals_evaluated = 0
     total_num_nodal_moves = 0
@@ -1231,6 +1174,12 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
             (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
 
+        print("XXX %s" % ([1 + np.max(i) for i in old_partition if i != [] ]))
+
+        # xxx
+        if num_blocks <= min_number_blocks:
+            break
+
         if np.all(np.isfinite(old_overall_entropy)):
             if not golden_ratio_bracked_established:
                 golden_ratio_bracked_established = True
@@ -1252,7 +1201,9 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
     print("Partition blocks is %s" % (1 + np.max(partition_bracket[0])))
 
-    return partition_bracket, old_interblock_edge_count[1]
+    alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracked_established,delta_entropy_threshold,num_blocks_to_merge)
+    
+    return alg_state, old_interblock_edge_count[1]
 
 def find_optimal_partition_wrapper(tup):
     args = syms['args']
@@ -1442,7 +1393,128 @@ def do_main(args):
     except AttributeError:
         pass
 
-    out_neighbors, in_neighbors, N, E, true_partition = load_graph_parts(input_filename, args)
+    if args.parts <= 1:
+        out_neighbors, in_neighbors, N, E, true_partition = load_graph_parts(input_filename, args)
+
+
+        if not args.test_resume:
+            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args)
+        else:
+            print("")
+            print("Test stop functionality.")
+            print("")
+            t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, min_number_blocks = int(N/8))
+
+            print("")
+            print("Resume bracket search.")
+            print("")
+
+            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
+
+
+        precision,recall = evaluate_partition(true_partition, partition)
+        return t_elapsed_partition,precision,recall
+    elif 1:
+        # Snowballing graph
+        out_neighbors,in_neighbors,partition_bracket = None,None,None
+
+        for part in range(1, args.parts + 1):
+            print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
+
+            if part == 1:
+                out_neighbors, in_neighbors, N, E, true_partition = \
+                        load_graph(input_filename,
+                                   load_true_partition=1,
+                                   strm_piece_num=part,
+                                   out_neighbors=out_neighbors,
+                                   in_neighbors=in_neighbors)
+                min_number_blocks = N / 16
+            else:
+                old_N = N
+                out_neighbors, in_neighbors, N, E = \
+                        load_graph(input_filename,
+                                   load_true_partition=0,
+                                   strm_piece_num=part,
+                                   out_neighbors=out_neighbors,
+                                   in_neighbors=in_neighbors)
+
+                # The new part may have additional nodes.
+                if old_N != N:
+                    print("Resize from %d to %d nodes" % (old_N,N))
+                    for i in [0,1,2]:
+                        print("Partition_bracket[i] is %s" % (1+np.max(partition_bracket[i])))
+
+                    for i in [0,1,2]:
+                        if partition_bracket[i] != []:
+                            old_B = 1 + np.max(partition_bracket[i])
+                            new_partition = np.zeros(N, dtype='int64')
+                            new_partition[:old_N] = partition_bracket[i]
+                            for j in range(0,(N - old_N)):
+                                new_partition[old_N + j] = old_B + j
+                            partition_bracket[i] = new_partition
+                    partition = partition_bracket[1]
+
+                min_number_blocks = int(min_number_blocks / 2)
+
+            print('Running partition %d N %d E %d' % (part,N,E))
+
+
+            t_elapsed_partition,partition,hist = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, partition_bracket = partition_bracket, min_number_blocks = min_number_blocks)
+
+
+
+        print('Final partition')
+        t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, partition_bracket = partition_bracket)
+
+        print('Evaluate final partition.')
+        precision,recall = evaluate_partition(true_partition, partition)
+    elif 0:
+        # Emerging edge piece by piece streaming.
+        # The assumption is that unlike parallel decimation, where a static graph is cut into
+        # multiple subgraphs which do not have the same nodes, the same node set is potentially
+        # present in each piece.
+        #
+
+        for part in range(1, args.parts + 1):
+            print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
+
+            out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition = \
+                        load_graph(input_filename,load_true_partition=1, strm_piece_num=part,
+                                   out_neighbors=None, in_neighbors=None)
+
+            # xxx
+            print('Running partition %d with N %d E %d' % (part,N_piece,E_piece))
+
+            partition_bracket, M_piece = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args, stop_at_bracket = True, verbose = args.verbose, min_number_blocks = int(N_piece/8))
+
+            if part == 1:
+                partition = partition_bracket[1]
+                out_neighbors, in_neighborsM = M_piece
+                continue
+
+            partition_piece = partition_bracket[1]
+            B_piece = M_piece.shape[0]
+
+
+            # # Merge all remaining pieces into one big partition and then merge down.
+            # Bs = [max(i) + 1 for i in partitions]
+            # partition = np.zeros(N, dtype=int)
+            # partition_offsets = np.zeros(len(partitions), dtype=int)
+            # partition_offsets[1:] = np.cumsum(Bs)[:-1]
+
+            # partition = np.concatenate([partitions[i] + partition_offsets[i] for i in range(len(partitions))])
+
+            # print("M_piece.shape = %s" % str(M_piece.shape))
+
+            # #partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args)
+            print('Merge into existing blocks')
+
+        print('Evaluate final partition.')
+
+
+
+def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket=0, alg_state=None, min_number_blocks=0):
+    global syms, t_prog_start
 
     if args.verbose > 1:
         from collections import Counter
@@ -1451,8 +1523,9 @@ def do_main(args):
 
 
     if args.predecimation > 1:
-        out_neighbors, in_neighbors, N, E, true_partition = decimate_graph(out_neighbors, in_neighbors, true_partition,
-                                                                           decimation = args.predecimation, decimated_piece = 0)
+        out_neighbors, in_neighbors, N, E, true_partition = \
+                                decimate_graph(out_neighbors, in_neighbors, true_partition,
+                                               decimation = args.predecimation, decimated_piece = 0)
 
     if args.mpi:
         from mpi4py import MPI
@@ -1472,10 +1545,10 @@ def do_main(args):
                              decimation, decimated_piece = comm.rank)
 
         t_prog_start = timeit.default_timer()
-        partition_bracket, M = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args, stop_at_bracket = False, verbose = args.verbose)
+        alg_state, M = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args, stop_at_bracket = False, verbose = args.verbose)
         t_prog_end = timeit.default_timer()
 
-        partition = partition_bracket[0]
+        partition = alg_state[0][0][1]
 
         if comm.rank != 0:
             comm.send(true_partition_piece, dest=0, tag=11)
@@ -1515,17 +1588,11 @@ def do_main(args):
         decimation = 1
         t_prog_start = timeit.default_timer()
 
-        if 1:
-            partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = args.verbose)
-        else:
-            # Test stop and resume functionality.
-            partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = True, verbose = args.verbose)
-            print("")
-            print("Resume bracket search.")
-            print("")
-            partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = args.verbose, partition_bracket = partition_bracket)
+        alg_state, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, \
+                                    args, stop_at_bracket = stop_at_bracket, verbose = args.verbose, \
+                                    alg_state = alg_state, num_block_reduction_rate = 0.50, min_number_blocks=min_number_blocks)
 
-        partition = partition_bracket[1]
+        partition = alg_state[0][0][1]
         t_prog_end = timeit.default_timer()
 
         if args.test_decimation > 0:
@@ -1534,12 +1601,13 @@ def do_main(args):
             partitions = [partition[i::decimation] for i in range(decimation)]
 
 
-    # Either multiprocess pool or MPI results need merging
+
+    # Either multiprocess pool or MPI results need final merging.
     if decimation > 1:
-        if args.verbose > 2:
+        if args.verbose > 1:
             for i in range(decimation):
                 print("")
-                print("Evaluate subgraph %d:" % i)
+                print("Evaluate decimated subgraph %d:" % i)
                 evaluate_partition(true_partitions[i], partitions[i])
 
         t_decimation_merge_start = timeit.default_timer()
@@ -1549,7 +1617,7 @@ def do_main(args):
         partitions = merge_partitions(partitions,
                                       4, out_neighbors, args.verbose, args.sparse_data, args.sparse_algorithm)
 
-        # Now merge all remaining pieces into one big partition and then merge down.
+        # Merge piece into  big partition and then merge down.
         Bs = [max(i) + 1 for i in partitions]
         partition = np.zeros(N, dtype=int)
         partition_offsets = np.zeros(len(partitions), dtype=int)
@@ -1576,9 +1644,23 @@ def do_main(args):
     t_elapsed_partition = t_prog_end - t_prog_start
     print('\nGraph partition took %.4f seconds' % (t_elapsed_partition))
 
-    precision,recall = evaluate_partition(true_partition, partition)
-    return t_elapsed_partition,precision,recall
+    if stop_at_bracket:
+        return t_elapsed_partition,partition,alg_state
+    else:
+        return t_elapsed_partition,partition
 
+# See: https://stackoverflow.com/questions/242485/starting-python-debugger-automatically-on-error
+def info(type, value, tb):
+    if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+    # we are in interactive mode or we don't have a tty-like
+    # device, so we call the default hook
+        sys.__excepthook__(type, value, tb)
+    else:
+        import traceback, pdb
+        # we are NOT in interactive mode, print the exception...
+        traceback.print_exception(type, value, tb)
+        # ...then start the debugger in post-mortem mode.
+        pdb.post_mortem(tb)
 
 block_sum_time_cum = 0
 
@@ -1606,9 +1688,13 @@ if __name__ == '__main__':
     parser.add_argument("--pipe", type=int, required=False, default=0)
     parser.add_argument("--test-decimation", type=int, required=False, default=0)
     parser.add_argument("--predecimation", type=int, required=False, default=0)
+    parser.add_argument("--debug", type=int, required=False, default=0)
+    parser.add_argument("--test-resume", type=int, required=False, default=0)
 
     args = parser.parse_args()
-    args.debug = 0
+
+    if args.debug:
+        sys.excepthook = info
 
     if args.sparse:
         args.sparse_algorithm = 1
