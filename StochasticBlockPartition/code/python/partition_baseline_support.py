@@ -60,7 +60,7 @@ def random_permutation(iterable, r=None):
     r = len(pool) if r is None else r
     return tuple(random.sample(pool, r))
 
-def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_neighbors=None, in_neighbors=None, permutate=False):
+def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_neighbors=None, in_neighbors=None,alg_state=None):
     """Load the graph from a TSV file with standard format, and the truth partition if available
 
         Parameters
@@ -124,9 +124,6 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         in_neighbors.extend([[] for i in range(N - len(in_neighbors))])
     weights_included = edge_rows.shape[1] == 3
 
-    if permutate:
-        permutation = [i for i in random_permutation(range(N))]
-
     # load edges to list of lists of out and in neighbors
     for i in range(edge_rows.shape[0]):
         if weights_included:
@@ -136,10 +133,6 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         # -1 on the node index since Python is 0-indexed and the standard graph TSV is 1-indexed
         from_idx = edge_rows[i, 0] - 1
         to_idx = edge_rows[i, 1] - 1
-
-        if permutate:
-            from_idx = permutation[from_idx]
-            to_idx = permutation[to_idx]
 
         out_neighbors[from_idx].append([to_idx, edge_weight])
         in_neighbors [to_idx].append([from_idx, edge_weight])
@@ -158,11 +151,51 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
 
     E = sum(len(v) for v in out_neighbors)  # number of edges
 
-    if permutate:
-        #in_neighbors = [in_neighbors[i] for i in permutation]
-        #out_neighbors = [out_neighbors[i] for i in permutation]
-        if load_true_partition:
-            true_b = [true_b[i] for i in permutation]
+    # New edges were streamed in. Update algorithm state accordingly.
+    if alg_state:
+        (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
+
+        (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
+
+        for i in range(edge_rows.shape[0]):
+            if weights_included:
+                edge_weight = edge_rows[i, 2]
+            else:
+                edge_weight = 1
+
+            from_idx = edge_rows[i, 0] - 1
+            to_idx = edge_rows[i, 1] - 1
+
+            interblock_edge_count[partition[from_idx], partition[to_idx]] += 1
+            block_degrees_out[partition[from_idx]] += 1
+            block_degrees_in[partition[to_idx]] += 1
+            block_degrees[partition[to_idx]] += 1
+            block_degrees[partition[from_idx]] += 1
+
+            for j in [0,1,2]:
+                if old_interblock_edge_count[j] != []:
+                    old_interblock_edge_count[j][old_partition[j][from_idx], old_partition[j][to_idx]] += 1
+                    old_block_degrees[j][old_partition[j][to_idx]] += 1
+                    old_block_degrees[j][old_partition[j][from_idx]] += 1
+
+                    old_block_degrees_out[j][old_partition[j][from_idx]] += 1
+
+                    old_block_degrees_in[j][old_partition[j][to_idx]] += 1
+
+                    old_overall_entropy[j] = compute_overall_entropy(
+                        old_interblock_edge_count[j],
+                        old_block_degrees_out[j],
+                        old_block_degrees_in[j],
+                        old_num_blocks[j],
+                        N,
+                        E)
+
+        hist = (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks)
+
+        alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves)
+
+        return out_neighbors, in_neighbors, N, E, alg_state
+        
 
     if load_true_partition:
         return out_neighbors, in_neighbors, N, E, true_b

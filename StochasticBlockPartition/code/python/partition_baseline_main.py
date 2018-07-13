@@ -1134,13 +1134,13 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         initial_num_block_reduction_rate = args.initial_block_reduction_rate
 
         num_blocks_to_merge = int(num_blocks * initial_num_block_reduction_rate)
-        golden_ratio_bracked_established = False
+        golden_ratio_bracket_established = False
         delta_entropy_threshold = delta_entropy_threshold1
         n_proposals_evaluated = 0
         total_num_nodal_moves = 0
     else:
         # resume search from a previous partition state
-        (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracked_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
+        (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
 
     args.n_proposal = 1
 
@@ -1186,8 +1186,8 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
         if np.all(np.isfinite(old_overall_entropy)):
             delta_entropy_threshold = delta_entropy_threshold2
-            if not golden_ratio_bracked_established:
-                golden_ratio_bracked_established = True
+            if not golden_ratio_bracket_established:
+                golden_ratio_bracket_established = True
                 print("Golden ratio found at blocks %s at time %4.4f entropy %s" % (old_num_blocks, timeit.default_timer() - t_prog_start, old_overall_entropy))
 
             if stop_at_bracket:
@@ -1197,7 +1197,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
             break
 
 
-    alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracked_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves)
+    alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves)
 
     return alg_state, partition
 
@@ -1399,7 +1399,7 @@ def do_main(args):
             print("")
             print("Test stop functionality.")
             print("")
-            t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, min_number_blocks = int(N/8))
+            t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, min_number_blocks = 0)
 
             print("")
             print("Resume bracket search.")
@@ -1410,7 +1410,7 @@ def do_main(args):
 
         precision,recall = evaluate_partition(true_partition, partition)
         return t_elapsed_partition,precision,recall
-    elif 1:
+    else:
         # Emerging edge piece by piece streaming.
         # The assumption is that unlike parallel decimation, where a static graph is cut into
         # multiple subgraphs which do not have the same nodes, the same node set is potentially
@@ -1426,24 +1426,46 @@ def do_main(args):
                         load_graph(input_filename,
                                    load_true_partition=1,
                                    strm_piece_num=part,
-                                   out_neighbors=out_neighbors,
-                                   in_neighbors=in_neighbors)
+                                   out_neighbors=None,
+                                   in_neighbors=None)
 
                 min_number_blocks = N / 2
             else:
-                out_neighbors, in_neighbors, N, E = \
-                        load_graph(input_filename,
-                                   load_true_partition=0,
-                                   strm_piece_num=part,
-                                   out_neighbors=out_neighbors,
-                                   in_neighbors=in_neighbors)
+                # Load true_partition here so the sizes of the arrays all equal N.
+                if alg_state:
+                    out_neighbors, in_neighbors, N, E, alg_state = \
+                                                    load_graph(input_filename,
+                                                               load_true_partition=1,
+                                                               strm_piece_num=part,
+                                                               out_neighbors=out_neighbors,
+                                                               in_neighbors=in_neighbors,
+                                                               alg_state = alg_state)
+
+                    hist = alg_state[0]
+                    (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
+
+                    print("Incrementally updated alg_state")
+                    print('New Overall entropy: {}'.format(old_overall_entropy))
+                    print('New Number of blocks: {}'.format(old_num_blocks))
+                    print("")
+                else:
+                    out_neighbors, in_neighbors, N, E, true_partition = \
+                                                    load_graph(input_filename,
+                                                               load_true_partition=1,
+                                                               strm_piece_num=part,
+                                                               out_neighbors=out_neighbors,
+                                                               in_neighbors=in_neighbors,
+                                                               alg_state = None)
+
+
+                print("Loaded piece %d N %d E %d" % (part,N,E))
                 min_number_blocks = int(min_number_blocks / 2)
 
             print('Running partition for %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
 
-            #t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
-            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = None)
-            precision,recall = evaluate_partition(true_partition, partition)
+            if part == 9:
+                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = 0)
+                precision,recall = evaluate_partition(true_partition, partition)
 
 
         print('Final partition')
