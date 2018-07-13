@@ -95,6 +95,17 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         The standard tsv file has the form for each row: "from to [weight]" (tab delimited). Nodes are indexed from 0
         to N-1. If available, the true partition is stored in the file `filename_truePartition.tsv`."""
 
+    if load_true_partition:
+        # read the entire true partition CSV into rows of partitions
+        true_b_rows = np.loadtxt('{}_truePartition.tsv'.format(input_filename), delimiter='\t', dtype=np.int64)
+        true_b = np.ones(true_b_rows.shape[0], dtype=int) * -1  # initialize truth assignment to -1 for 'unknown'
+        for i in range(true_b_rows.shape[0]):
+            true_b[true_b_rows[i, 0] - 1] = int(
+                true_b_rows[i, 1] - 1)  # -1 since Python is 0-indexed and the TSV is 1-indexed
+        true_partition_N = len(true_b)
+    else:
+        true_partition_N = 0
+
     # read the entire graph CSV into rows of edges
     if (strm_piece_num == None):
         edge_rows = np.loadtxt('{}.tsv'.format(input_filename), delimiter='\t', dtype=np.int64)
@@ -102,14 +113,11 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
         edge_rows = np.loadtxt('{}_{}.tsv'.format(input_filename, strm_piece_num), delimiter='\t', dtype=np.int64)
 
     if (out_neighbors == None):  # no previously loaded streaming pieces
-        N = edge_rows[:, 0:2].max()  # number of nodes
+        N = max(edge_rows[:, 0:2].max(), true_partition_N)  # number of nodes
         out_neighbors = [[] for i in range(N)]
         in_neighbors = [[] for i in range(N)]
     else:  # add to previously loaded streaming pieces
-        # xxx np.int64 is here to handle a comparison later in prepare_for_partition_on_next_num_blocks
-        # that comparese old_B[1] > B, and old_B[1] is []
-        #
-        N = max(edge_rows[:, 0:2].max(), np.int64(len(out_neighbors)))  # number of nodes
+        N = max(edge_rows[:, 0:2].max(), len(out_neighbors))  # number of nodes
         out_neighbors = [list(out_neighbors[i]) for i in range(len(out_neighbors))]
         out_neighbors.extend([[] for i in range(N - len(out_neighbors))])
         in_neighbors = [list(in_neighbors[i]) for i in range(len(in_neighbors))]
@@ -149,14 +157,6 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
             in_neighbors[i] = np.array(in_neighbors[i], dtype=int).reshape((0,2))
 
     E = sum(len(v) for v in out_neighbors)  # number of edges
-
-    if load_true_partition:
-        # read the entire true partition CSV into rows of partitions
-        true_b_rows = np.loadtxt('{}_truePartition.tsv'.format(input_filename), delimiter='\t', dtype=np.int64)
-        true_b = np.ones(true_b_rows.shape[0], dtype=int) * -1  # initialize truth assignment to -1 for 'unknown'
-        for i in range(true_b_rows.shape[0]):
-            true_b[true_b_rows[i, 0] - 1] = int(
-                true_b_rows[i, 1] - 1)  # -1 since Python is 0-indexed and the TSV is 1-indexed
 
     if permutate:
         #in_neighbors = [in_neighbors[i] for i in permutation]
@@ -1035,7 +1035,8 @@ def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, hist, B
     # update the best three partitions so far and their statistics
     if S <= old_S[1]:  # if the current partition is the best so far
         # if the current number of blocks is smaller than the previous best number of blocks
-        old_index = 0 if old_B[1] > B else 2
+        # Also, old_B[1] could be [] depending on the program state.
+        old_index = 0 if old_B[1] and old_B[1] > B else 2
         old_b[old_index] = old_b[1]
         old_M[old_index] = old_M[1]
         old_d[old_index] = old_d[1]
@@ -1047,7 +1048,7 @@ def prepare_for_partition_on_next_num_blocks(S, b, M, d, d_out, d_in, B, hist, B
         index = 1
     else:  # the current partition is not the best so far
         # if the current number of blocks is smaller than the best number of blocks so far
-        index = 2 if old_B[1] > B else 0
+        index = 2 if old_B[1] and old_B[1] > B else 0
 
     old_b[index] = b
     old_M[index] = M
