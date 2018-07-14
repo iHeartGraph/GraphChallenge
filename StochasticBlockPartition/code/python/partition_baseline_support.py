@@ -19,6 +19,7 @@ from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
 from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict, fast_sparse_array
 from collections import Iterable
+import timeit
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
@@ -153,6 +154,8 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
 
     # New edges were streamed in. Update algorithm state accordingly.
     if alg_state:
+        t0 = timeit.default_timer()
+
         (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
 
         (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
@@ -189,12 +192,12 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
                         old_num_blocks[j],
                         N,
                         E)
-
         hist = (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks)
 
         alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves)
-
-        return out_neighbors, in_neighbors, N, E, alg_state
+        t1 = timeit.default_timer()
+        t_compute = t1 - t0
+        return out_neighbors, in_neighbors, N, E, alg_state, t_compute
         
 
     if load_true_partition:
@@ -1255,11 +1258,13 @@ def evaluate_partition(true_b, alg_b):
 
     pairwise_recall = num_agreement_same / (num_same_in_b1)
     pairwise_precision = num_agreement_same / (num_same_in_b2)
+    f1_score = 2 * (pairwise_precision * pairwise_recall) / (pairwise_precision + pairwise_recall)
 
     print('Rand Index: {}'.format(rand_index))
     print('Adjusted Rand Index: {}'.format(adjusted_rand_index))
     print('Pairwise Recall: {}'.format(pairwise_recall))
     print('Pairwise Precision: {}'.format(pairwise_precision))
+    print('F1 Score: %f' % f1_score)
     print('\n')
 
     # compute the information theoretic metrics

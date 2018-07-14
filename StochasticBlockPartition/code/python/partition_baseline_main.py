@@ -1423,9 +1423,11 @@ def do_main(args):
         # present in each piece.
         #
         out_neighbors,in_neighbors,alg_state = None,None,None
+        t_all_parts = 0.0
 
         for part in range(1, args.parts + 1):
             print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
+            t_part = 0.0
 
             if part == 1:
                 out_neighbors, in_neighbors, N, E, true_partition = \
@@ -1438,14 +1440,15 @@ def do_main(args):
             else:
                 # Load true_partition here so the sizes of the arrays all equal N.
                 if alg_state:
-                    out_neighbors, in_neighbors, N, E, alg_state = \
+                    out_neighbors, in_neighbors, N, E, alg_state,t_compute = \
                                                     load_graph(input_filename,
                                                                load_true_partition=1,
                                                                strm_piece_num=part,
                                                                out_neighbors=out_neighbors,
                                                                in_neighbors=in_neighbors,
                                                                alg_state = alg_state)
-
+                    t_part += t_compute
+                    t0 = timeit.default_timer()
                     hist = alg_state[0]
                     (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
 
@@ -1485,7 +1488,11 @@ def do_main(args):
                         overall_entropy = old_overall_entropy[j]
 
                         total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args)
+
+                    t1 = timeit.default_timer()
+                    t_part += (t1 - t0)
                 else:
+                    # We are not doing partitioning yet. Just wait.
                     out_neighbors, in_neighbors, N, E, true_partition = \
                                                     load_graph(input_filename,
                                                                load_true_partition=1,
@@ -1500,17 +1507,26 @@ def do_main(args):
             print('Running partition for %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
 
             if part > 2:
+                t0 = timeit.default_timer()
                 min_number_blocks /= 2
                 t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
+                t1 = timeit.default_timer()
+                t_part += t1 - t0
+                t_all_parts += t_part
                 precision,recall = evaluate_partition(true_partition, partition)
 
+            if part == args.parts:
+                print('Final partition')
+                t0 = timeit.default_timer()
+                t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
+                t1 = timeit.default_timer()
+                t_part += (t1 - t0)
+                t_all_parts += t_part
 
-        print('Final partition')
-        t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
+                print('Evaluate final partition.')
+                precision,recall = evaluate_partition(true_partition, partition)
 
-        print('Evaluate final partition.')
-        precision,recall = evaluate_partition(true_partition, partition)
-
+            print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
     return
 
 
