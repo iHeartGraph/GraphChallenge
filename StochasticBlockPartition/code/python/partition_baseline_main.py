@@ -1017,7 +1017,12 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         optimal_stop_found = True
         best_idx = 1
     else:
-        extrapolated_newton = num_target_blocks[1] - 0.5 * (S[2] - S[0]) / (S[2] - S[1] - (S[1] - S[0]))
+        # Can be zero when there are some nodes with no edges and so reducing the block count
+        # does not change the entropy.
+        if (S[2] - S[1] - (S[1] - S[0])) != 0:
+            extrapolated_newton = num_target_blocks[1] - 0.5 * (S[2] - S[0]) / (S[2] - S[1] - (S[1] - S[0]))
+        else:
+            extrapolated_newton = 0.0
 
         if verbose:
             print("Stopping criterion not found at %s blocks extrapolate to %s blocks derivative %s at time %4.4f." % (num_target_blocks[1], extrapolated_newton, dS_dn, timeit.default_timer() - t_prog_start))
