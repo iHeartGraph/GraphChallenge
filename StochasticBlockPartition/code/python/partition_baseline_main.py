@@ -12,6 +12,7 @@ import numpy.random
 from compute_delta_entropy import compute_delta_entropy
 import random
 import shutil
+import queue
 
 compressed_threshold = 5000
 
@@ -1447,6 +1448,38 @@ def do_main(args):
                     print('New Overall entropy: {}'.format(old_overall_entropy))
                     print('New Number of blocks: {}'.format(old_num_blocks))
                     print("")
+
+                    verbose = 1
+                    n_thread = args.threads
+                    batch_size = args.node_move_update_batch_size
+                    vertex_num_in_neighbor_edges = np.empty(N, dtype=int)
+                    vertex_num_out_neighbor_edges = np.empty(N, dtype=int)
+                    vertex_num_neighbor_edges = np.empty(N, dtype=int)
+                    vertex_neighbors = [np.concatenate((out_neighbors[i], in_neighbors[i])) for i in range(N)]
+
+                    for i in range(N):
+                        vertex_num_out_neighbor_edges[i] = sum(out_neighbors[i][:,1])
+                        vertex_num_in_neighbor_edges[i] = sum(in_neighbors[i][:,1])
+                        vertex_num_neighbor_edges[i] = vertex_num_out_neighbor_edges[i] + vertex_num_in_neighbor_edges[i]
+                    #delta_entropy_threshold = delta_entropy_threshold1 = 5e-4
+                    delta_entropy_threshold = 1e-4
+
+                    for j in [0,1,2]:
+                        if old_interblock_edge_count[j] == []:
+                            continue
+
+                        print("Updating previous state in bracket history.")
+
+                        M_old = old_interblock_edge_count[j].copy()
+                        M = old_interblock_edge_count[j]
+                        partition = old_partition[j]
+                        block_degrees_out = old_block_degrees_out[j]
+                        block_degrees_in = old_block_degrees_in[j]
+                        block_degrees = old_block_degrees[j]
+                        num_blocks = old_num_blocks[j]
+                        overall_entropy = old_overall_entropy[j]
+
+                        total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args)
                 else:
                     out_neighbors, in_neighbors, N, E, true_partition = \
                                                     load_graph(input_filename,
@@ -1456,15 +1489,14 @@ def do_main(args):
                                                                in_neighbors=in_neighbors,
                                                                alg_state = None)
 
-
                 print("Loaded piece %d N %d E %d" % (part,N,E))
                 min_number_blocks = int(min_number_blocks / 2)
 
             print('Running partition for %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
 
-            if part > 1:
-                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
+            if part > 2:
                 min_number_blocks /= 2
+                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
                 precision,recall = evaluate_partition(true_partition, partition)
 
 
