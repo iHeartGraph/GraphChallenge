@@ -1366,6 +1366,167 @@ def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, 
 
     return partition, num_blocks
 
+def naive_streaming(args):
+    input_filename = args.input_filename
+    # Emerging edge piece by piece streaming.
+    # The assumption is that unlike parallel decimation, where a static graph is cut into
+    # multiple subgraphs which do not have the same nodes, the same node set is potentially
+    # present in each piece.
+    #
+    out_neighbors,in_neighbors = None,None
+    t_all_parts = 0.0
+
+    for part in range(1, args.parts + 1):
+        print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
+        t_part = 0.0
+
+        if part == 1:
+            out_neighbors, in_neighbors, N, E, true_partition = \
+                    load_graph(input_filename,
+                               load_true_partition=1,
+                               strm_piece_num=part,
+                               out_neighbors=None,
+                               in_neighbors=None)
+        else:
+            out_neighbors, in_neighbors, N, E = \
+                    load_graph(input_filename,
+                               load_true_partition=0,
+                               strm_piece_num=part,
+                               out_neighbors=out_neighbors,
+                               in_neighbors=in_neighbors)
+
+        # Run to ground.
+        print('Running partition for part %d N %d E %d' % (part,N,E))
+
+        t0 = timeit.default_timer()
+        t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = None)
+        t1 = timeit.default_timer()
+        t_part += (t1 - t0)
+        t_all_parts += t_part
+
+        if part == args.parts:
+            print('Evaluate final partition.')
+        else:
+            print('Evaluate part %d' % part)
+
+        precision,recall = evaluate_partition(true_partition, partition)
+        print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
+    return
+
+
+def incremental_streaming(args):
+    input_filename = args.input_filename
+    # Emerging edge piece by piece streaming.
+    # The assumption is that unlike parallel decimation, where a static graph is cut into
+    # multiple subgraphs which do not have the same nodes, the same node set is potentially
+    # present in each piece.
+    #
+    out_neighbors,in_neighbors,alg_state = None,None,None
+    t_all_parts = 0.0
+
+    for part in range(1, args.parts + 1):
+        print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
+        t_part = 0.0
+
+        if part == 1:
+            out_neighbors, in_neighbors, N, E, true_partition = \
+                    load_graph(input_filename,
+                               load_true_partition=1,
+                               strm_piece_num=part,
+                               out_neighbors=None,
+                               in_neighbors=None)
+            min_number_blocks = N / 2
+        else:
+            # Load true_partition here so the sizes of the arrays all equal N.
+            if alg_state:
+                out_neighbors, in_neighbors, N, E, alg_state,t_compute = \
+                                                load_graph(input_filename,
+                                                           load_true_partition=1,
+                                                           strm_piece_num=part,
+                                                           out_neighbors=out_neighbors,
+                                                           in_neighbors=in_neighbors,
+                                                           alg_state = alg_state)
+                t_part += t_compute
+                t0 = timeit.default_timer()
+                hist = alg_state[0]
+                (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
+
+                print("Incrementally updated alg_state")
+                print('New Overall entropy: {}'.format(old_overall_entropy))
+                print('New Number of blocks: {}'.format(old_num_blocks))
+                print("")
+
+                verbose = 1
+                n_thread = args.threads
+                batch_size = args.node_move_update_batch_size
+                vertex_num_in_neighbor_edges = np.empty(N, dtype=int)
+                vertex_num_out_neighbor_edges = np.empty(N, dtype=int)
+                vertex_num_neighbor_edges = np.empty(N, dtype=int)
+                vertex_neighbors = [np.concatenate((out_neighbors[i], in_neighbors[i])) for i in range(N)]
+
+                for i in range(N):
+                    vertex_num_out_neighbor_edges[i] = sum(out_neighbors[i][:,1])
+                    vertex_num_in_neighbor_edges[i] = sum(in_neighbors[i][:,1])
+                    vertex_num_neighbor_edges[i] = vertex_num_out_neighbor_edges[i] + vertex_num_in_neighbor_edges[i]
+                #delta_entropy_threshold = delta_entropy_threshold1 = 5e-4
+                delta_entropy_threshold = 1e-4
+
+                for j in [0,1,2]:
+                    if old_interblock_edge_count[j] == []:
+                        continue
+
+                    print("Updating previous state in bracket history.")
+
+                    M_old = old_interblock_edge_count[j].copy()
+                    M = old_interblock_edge_count[j]
+                    partition = old_partition[j]
+                    block_degrees_out = old_block_degrees_out[j]
+                    block_degrees_in = old_block_degrees_in[j]
+                    block_degrees = old_block_degrees[j]
+                    num_blocks = old_num_blocks[j]
+                    overall_entropy = old_overall_entropy[j]
+
+                    total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args)
+
+                t1 = timeit.default_timer()
+                t_part += (t1 - t0)
+            else:
+                # We are not doing partitioning yet. Just wait.
+                out_neighbors, in_neighbors, N, E, true_partition = \
+                                                load_graph(input_filename,
+                                                           load_true_partition=1,
+                                                           strm_piece_num=part,
+                                                           out_neighbors=out_neighbors,
+                                                           in_neighbors=in_neighbors,
+                                                           alg_state = None)
+
+            print("Loaded piece %d N %d E %d" % (part,N,E))
+            min_number_blocks = int(min_number_blocks / 2)
+
+        print('Running partition for part %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
+
+        if part > 2:
+            t0 = timeit.default_timer()
+            min_number_blocks /= 2
+            t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
+            t1 = timeit.default_timer()
+            t_part += t1 - t0
+            t_all_parts += t_part
+            precision,recall = evaluate_partition(true_partition, partition)
+
+        if part == args.parts:
+            print('Final partition')
+            t0 = timeit.default_timer()
+            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
+            t1 = timeit.default_timer()
+            t_part += (t1 - t0)
+            t_all_parts += t_part
+
+            print('Evaluate final partition.')
+            precision,recall = evaluate_partition(true_partition, partition)
+
+        print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
+    return
 
 def do_main(args):
     global syms, t_prog_start
@@ -1417,116 +1578,10 @@ def do_main(args):
         precision,recall = evaluate_partition(true_partition, partition)
         return t_elapsed_partition,precision,recall
     else:
-        # Emerging edge piece by piece streaming.
-        # The assumption is that unlike parallel decimation, where a static graph is cut into
-        # multiple subgraphs which do not have the same nodes, the same node set is potentially
-        # present in each piece.
-        #
-        out_neighbors,in_neighbors,alg_state = None,None,None
-        t_all_parts = 0.0
-
-        for part in range(1, args.parts + 1):
-            print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
-            t_part = 0.0
-
-            if part == 1:
-                out_neighbors, in_neighbors, N, E, true_partition = \
-                        load_graph(input_filename,
-                                   load_true_partition=1,
-                                   strm_piece_num=part,
-                                   out_neighbors=None,
-                                   in_neighbors=None)
-                min_number_blocks = N / 2
-            else:
-                # Load true_partition here so the sizes of the arrays all equal N.
-                if alg_state:
-                    out_neighbors, in_neighbors, N, E, alg_state,t_compute = \
-                                                    load_graph(input_filename,
-                                                               load_true_partition=1,
-                                                               strm_piece_num=part,
-                                                               out_neighbors=out_neighbors,
-                                                               in_neighbors=in_neighbors,
-                                                               alg_state = alg_state)
-                    t_part += t_compute
-                    t0 = timeit.default_timer()
-                    hist = alg_state[0]
-                    (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
-
-                    print("Incrementally updated alg_state")
-                    print('New Overall entropy: {}'.format(old_overall_entropy))
-                    print('New Number of blocks: {}'.format(old_num_blocks))
-                    print("")
-
-                    verbose = 1
-                    n_thread = args.threads
-                    batch_size = args.node_move_update_batch_size
-                    vertex_num_in_neighbor_edges = np.empty(N, dtype=int)
-                    vertex_num_out_neighbor_edges = np.empty(N, dtype=int)
-                    vertex_num_neighbor_edges = np.empty(N, dtype=int)
-                    vertex_neighbors = [np.concatenate((out_neighbors[i], in_neighbors[i])) for i in range(N)]
-
-                    for i in range(N):
-                        vertex_num_out_neighbor_edges[i] = sum(out_neighbors[i][:,1])
-                        vertex_num_in_neighbor_edges[i] = sum(in_neighbors[i][:,1])
-                        vertex_num_neighbor_edges[i] = vertex_num_out_neighbor_edges[i] + vertex_num_in_neighbor_edges[i]
-                    #delta_entropy_threshold = delta_entropy_threshold1 = 5e-4
-                    delta_entropy_threshold = 1e-4
-
-                    for j in [0,1,2]:
-                        if old_interblock_edge_count[j] == []:
-                            continue
-
-                        print("Updating previous state in bracket history.")
-
-                        M_old = old_interblock_edge_count[j].copy()
-                        M = old_interblock_edge_count[j]
-                        partition = old_partition[j]
-                        block_degrees_out = old_block_degrees_out[j]
-                        block_degrees_in = old_block_degrees_in[j]
-                        block_degrees = old_block_degrees[j]
-                        num_blocks = old_num_blocks[j]
-                        overall_entropy = old_overall_entropy[j]
-
-                        total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args)
-
-                    t1 = timeit.default_timer()
-                    t_part += (t1 - t0)
-                else:
-                    # We are not doing partitioning yet. Just wait.
-                    out_neighbors, in_neighbors, N, E, true_partition = \
-                                                    load_graph(input_filename,
-                                                               load_true_partition=1,
-                                                               strm_piece_num=part,
-                                                               out_neighbors=out_neighbors,
-                                                               in_neighbors=in_neighbors,
-                                                               alg_state = None)
-
-                print("Loaded piece %d N %d E %d" % (part,N,E))
-                min_number_blocks = int(min_number_blocks / 2)
-
-            print('Running partition for %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
-
-            if part > 2:
-                t0 = timeit.default_timer()
-                min_number_blocks /= 2
-                t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
-                t1 = timeit.default_timer()
-                t_part += t1 - t0
-                t_all_parts += t_part
-                precision,recall = evaluate_partition(true_partition, partition)
-
-            if part == args.parts:
-                print('Final partition')
-                t0 = timeit.default_timer()
-                t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
-                t1 = timeit.default_timer()
-                t_part += (t1 - t0)
-                t_all_parts += t_part
-
-                print('Evaluate final partition.')
-                precision,recall = evaluate_partition(true_partition, partition)
-
-            print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
+        if args.naive_streaming:
+            naive_streaming(args)
+        else:
+            incremental_streaming(args)
     return
 
 
@@ -1707,6 +1762,7 @@ if __name__ == '__main__':
     parser.add_argument("--predecimation", type=int, required=False, default=0)
     parser.add_argument("--debug", type=int, required=False, default=0)
     parser.add_argument("--test-resume", type=int, required=False, default=0)
+    parser.add_argument("--naive-streaming", type=int, required=False, default=0)
 
     args = parser.parse_args()
 
