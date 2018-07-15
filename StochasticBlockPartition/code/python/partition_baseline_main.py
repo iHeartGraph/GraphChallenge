@@ -1078,7 +1078,7 @@ def load_graph_parts(input_filename, args):
                     print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
                     out_neighbors, in_neighbors, N, E = load_graph(input_filename, load_true_partition=False, strm_piece_num=part, out_neighbors=out_neighbors, in_neighbors=in_neighbors)
     else:
-            out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available, permutate=0)
+            out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available)
     return out_neighbors, in_neighbors, N, E, true_partition
 
 
@@ -1411,7 +1411,7 @@ def naive_streaming(args):
 
         precision,recall = evaluate_partition(true_partition, partition)
         print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
-    return
+    return t_all_parts
 
 
 def copy_alg_state(alg_state):
@@ -1559,7 +1559,7 @@ def incremental_streaming(args):
             precision,recall = evaluate_partition(true_partition, partition)
 
         print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
-    return
+    return t_all_parts
 
 def do_main(args):
     global syms, t_prog_start
@@ -1612,9 +1612,10 @@ def do_main(args):
         return t_elapsed_partition,precision,recall
     else:
         if args.naive_streaming:
-            naive_streaming(args)
+            t_compute = naive_streaming(args)
         else:
-            incremental_streaming(args)
+            t_compute = incremental_streaming(args)
+        return t_compute
     return
 
 
