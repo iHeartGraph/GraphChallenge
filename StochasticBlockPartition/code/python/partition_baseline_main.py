@@ -1414,6 +1414,34 @@ def naive_streaming(args):
     return
 
 
+def copy_alg_state(alg_state):
+    # Create a deep copy of algorithmic state.
+    (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
+
+    (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
+
+    hist_copy = tuple((i.copy() for i in hist))
+    num_blocks_copy = num_blocks.copy()
+    overall_entropy_copy = overall_entropy.copy()
+    partition_copy = partition.copy()
+    interblock_edge_count_copy = interblock_edge_count.copy()
+    block_degrees_out_copy = block_degrees_out.copy()
+    block_degrees_in_copy = block_degrees_in.copy()
+    block_degrees_copy = block_degrees.copy()
+    golden_ratio_bracket_established_copy = golden_ratio_bracket_established # bool
+    delta_entropy_threshold_copy = delta_entropy_threshold # float
+    num_blocks_to_merge_copy = num_blocks_to_merge # int
+    optimal_num_blocks_found_copy = optimal_num_blocks_found # bool
+    n_proposals_evaluated_copy = n_proposals_evaluated # int
+    total_num_nodal_moves_copy = total_num_nodal_moves # int
+
+
+    alg_state_copy = (hist_copy, num_blocks_copy, overall_entropy_copy, partition_copy, interblock_edge_count_copy, block_degrees_out_copy, block_degrees_in_copy, block_degrees_copy, golden_ratio_bracket_established_copy, delta_entropy_threshold_copy, num_blocks_to_merge_copy, optimal_num_blocks_found_copy, n_proposals_evaluated_copy, total_num_nodal_moves_copy)
+
+    return alg_state_copy
+
+
+
 def incremental_streaming(args):
     input_filename = args.input_filename
     # Emerging edge piece by piece streaming.
@@ -1509,6 +1537,11 @@ def incremental_streaming(args):
             t0 = timeit.default_timer()
             min_number_blocks /= 2
             t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
+
+            alg_state_copy = copy_alg_state(alg_state)
+
+            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state_copy)
+
             t1 = timeit.default_timer()
             t_part += t1 - t0
             t_all_parts += t_part
