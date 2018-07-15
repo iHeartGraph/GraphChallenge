@@ -1410,7 +1410,8 @@ def naive_streaming(args):
             print('Evaluate part %d' % part)
 
         precision,recall = evaluate_partition(true_partition, partition)
-        print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
+        print('Elapsed compute time for part %d is %f cumulative %f precision %f recall %f' % (part,t_part,t_all_parts,precision,recall))
+
     return t_all_parts
 
 
@@ -1421,7 +1422,10 @@ def copy_alg_state(alg_state):
     (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
 
     hist_copy = tuple((i.copy() for i in hist))
-    num_blocks_copy = num_blocks.copy()
+    try:
+        num_blocks_copy = num_blocks.copy()
+    except AttributeError:
+        num_blocks_copy = num_blocks
     overall_entropy_copy = overall_entropy.copy()
     partition_copy = partition.copy()
     interblock_edge_count_copy = interblock_edge_count.copy()
@@ -1533,21 +1537,21 @@ def incremental_streaming(args):
 
         print('Running partition for part %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
 
-        if part > 2:
+        if part > 1:
             t0 = timeit.default_timer()
             min_number_blocks /= 2
             t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
 
             alg_state_copy = copy_alg_state(alg_state)
 
+        if part > 1 and part < args.parts:
             t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state_copy)
 
             t1 = timeit.default_timer()
             t_part += t1 - t0
             t_all_parts += t_part
             precision,recall = evaluate_partition(true_partition, partition)
-
-        if part == args.parts:
+        else:
             print('Final partition')
             t0 = timeit.default_timer()
             t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
@@ -1558,11 +1562,19 @@ def incremental_streaming(args):
             print('Evaluate final partition.')
             precision,recall = evaluate_partition(true_partition, partition)
 
-        print('Elapsed compute time for part %d is %f cumulative %f' % (part,t_part,t_all_parts))
+        print('Elapsed compute time for part %d is %f cumulative %f precision %f recall %f' % (part,t_part,t_all_parts,precision,recall))
+
     return t_all_parts
 
 def do_main(args):
     global syms, t_prog_start
+
+    if args.sparse:
+        args.sparse_algorithm = 1
+        args.sparse_data = 1
+    elif args.sparse_data:
+        args.sparse_algorithm = 1
+
     t_prog_start = timeit.default_timer()
 
     if args.verbose > 0:
@@ -1802,12 +1814,6 @@ if __name__ == '__main__':
 
     if args.debug:
         sys.excepthook = info
-
-    if args.sparse:
-        args.sparse_algorithm = 1
-        args.sparse_data = 1
-    elif args.sparse_data:
-        args.sparse_algorithm = 1
 
     if args.profile:
         import cProfile
