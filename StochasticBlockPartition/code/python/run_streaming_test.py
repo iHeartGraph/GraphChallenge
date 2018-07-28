@@ -243,6 +243,13 @@ if __name__ == '__main__':
                       '../../data/streaming/emergingEdges/20000_nodes/simulated_blockmodel_graph_20000_nodes_edgeSample',
                       '../../data/streaming/emergingEdges/50000_nodes/simulated_blockmodel_graph_50000_nodes_edgeSample')
 
+    snowball_files = ('../../data/streaming/snowballSampling/500_nodes/simulated_blockmodel_graph_500_nodes_snowball',
+                      '../../data/streaming/snowballSampling/1000_nodes/simulated_blockmodel_graph_1000_nodes_snowball',
+                      '../../data/streaming/snowballSampling/5000_nodes/simulated_blockmodel_graph_5000_nodes_snowball',
+                      '../../data/streaming/snowballSampling/20000_nodes/simulated_blockmodel_graph_20000_nodes_snowball',
+                      '../../data/streaming/snowballSampling/50000_nodes/simulated_blockmodel_graph_50000_nodes_snowball')
+
+
 
     emerging_2018_files = ('/mnt/raid0_huge/ahsen/graph_challenge_data/streamingEdge/lowOverlap_lowBlockSizeVar/streamingEdge_lowOverlap_lowBlockSizeVar_1000_nodes',
                            '/mnt/raid0_huge/ahsen/graph_challenge_data/streamingEdge/lowOverlap_lowBlockSizeVar/streamingEdge_lowOverlap_lowBlockSizeVar_5000_nodes',
@@ -255,7 +262,7 @@ if __name__ == '__main__':
     )
 
     # Verify all files are openable.
-    for i in emerging_2018_files + emerging_files:
+    for i in emerging_2018_files + emerging_files + snowball_files:
         open(i + '_1.tsv')
 
     small_files = input_files[:3]
@@ -270,12 +277,12 @@ if __name__ == '__main__':
     results = {}
 
     if args['single-small']:
-        var_args = (('input_filename', emerging_files[0:2]),
+        var_args = (('input_filename', emerging_files[0:1]),
                     ('sparse',(2,)),
                     ('threads',(16,)),
                     ('parts',(10,)),
                     ('naive_streaming',(0,1)),
-                    ('iteration', range(3))
+                    ('iteration', [5])
         )
 
         print("Running Small Streaming tests.")
