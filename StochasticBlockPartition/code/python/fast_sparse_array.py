@@ -301,7 +301,7 @@ def take_nonzero(A, idx, axis, sort):
         idx = a.nonzero()[0]
         val = a[idx]
         return idx, val
-    elif type(A) is fast_sparse_array or type(A) is fast_sparse_array_dict:
+    elif type(A) is fast_sparse_array:
         idx,val = A.take(idx, axis)
         if sort:
             s = np.argsort(idx)
