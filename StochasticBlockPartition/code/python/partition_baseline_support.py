@@ -374,9 +374,6 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
         return r
 
     rand_neighbor = np.random.choice(neighbors, p=neighbor_weights / float(n_neighbors))
-
-    #rand_neighbor = np.random.choice(neighbors[:,0])
-
     u = b[rand_neighbor]
 
     if np.random.uniform() <= B / (d[u].astype(float) + B):

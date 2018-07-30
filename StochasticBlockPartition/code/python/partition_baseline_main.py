@@ -793,8 +793,8 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
 
                 if accept:
                     t_update_partition_beg = timeit.default_timer()
-
                     total_num_nodal_moves_itr += 1
+
                     num_nodal_moves += 1
                     itr_delta_entropy[itr] += delta_entropy
 
