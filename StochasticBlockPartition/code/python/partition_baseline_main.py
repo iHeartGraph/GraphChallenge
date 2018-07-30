@@ -642,6 +642,8 @@ def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_a
             print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.9f}".format(itr, num_nodal_moves,
                                                                                 itr_delta_entropy[itr] / float(
                                                                                     overall_entropy_cur)))
+        if num_nodal_moves <= (N * args.min_nodal_moves_ratio):
+            break
 
         # exit MCMC if the recent change in entropy falls below a small fraction of the overall entropy
         if itr >= (delta_entropy_moving_avg_window - 1):  
@@ -901,6 +903,9 @@ def nodal_moves_parallel(n_thread, batch_size, max_num_nodal_itr, delta_entropy_
             print("Itr: {:3d}, number of nodal moves: {:3d}, delta S: {:0.9f}".format(itr, num_nodal_moves,
                                                                                 itr_delta_entropy[itr] / float(
                                                                                     overall_entropy_cur)))
+
+        if num_nodal_moves <= (N * args.min_nodal_moves_ratio):
+            break
 
         # exit MCMC if the recent change in entropy falls below a small fraction of the overall entropy
         if itr >= (delta_entropy_moving_avg_window - 1):  
@@ -1808,6 +1813,7 @@ if __name__ == '__main__':
     parser.add_argument("--debug", type=int, required=False, default=0)
     parser.add_argument("--test-resume", type=int, required=False, default=0)
     parser.add_argument("--naive-streaming", type=int, required=False, default=0)
+    parser.add_argument("--min-nodal-moves-ratio", type=float, required=False, default=0.0)
 
     args = parser.parse_args()
 
