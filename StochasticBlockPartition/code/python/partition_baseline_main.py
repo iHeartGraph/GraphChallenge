@@ -12,7 +12,12 @@ import numpy.random
 from compute_delta_entropy import compute_delta_entropy
 import random
 import shutil
-import queue
+
+try:
+    from queue import Empty as queue_empty
+except:
+    from Queue import Empty as queue_empty
+
 
 compressed_threshold = 5000
 
@@ -307,7 +312,7 @@ def propose_node_movement_sparse_wrapper(tup):
                 partition, M = update_partition_single(partition, ni, s, M,
                                                        new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col, args)
 
-            except queue.Empty:
+            except queue_empty:
                 break
 
     if args.verbose > 3:
