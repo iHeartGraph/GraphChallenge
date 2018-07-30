@@ -185,13 +185,16 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
 
                     old_block_degrees_in[j][old_partition[j][to_idx]] += 1
 
-                    old_overall_entropy[j] = compute_overall_entropy(
-                        old_interblock_edge_count[j],
-                        old_block_degrees_out[j],
-                        old_block_degrees_in[j],
-                        old_num_blocks[j],
-                        N,
-                        E)
+        for j in [0,1,2]:
+            if old_interblock_edge_count[j] != []:
+                old_overall_entropy[j] = compute_overall_entropy(
+                    old_interblock_edge_count[j],
+                    old_block_degrees_out[j],
+                    old_block_degrees_in[j],
+                    old_num_blocks[j],
+                    N,
+                    E)
+
         hist = (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks)
 
         alg_state = (hist,num_blocks,overall_entropy,partition,interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves)
