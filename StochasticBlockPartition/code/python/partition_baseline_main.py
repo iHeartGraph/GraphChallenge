@@ -1154,6 +1154,23 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         delta_entropy_threshold = delta_entropy_threshold1
         n_proposals_evaluated = 0
         total_num_nodal_moves = 0
+    elif len(alg_state) == 1:
+        hist, graph_object = initialize_partition_variables()
+        partition = alg_state[0]
+        num_blocks = 1 + np.max(partition)
+
+        golden_ratio_bracket_established = False
+        delta_entropy_threshold = delta_entropy_threshold1
+        n_proposals_evaluated = 0
+        total_num_nodal_moves = 0
+
+        interblock_edge_count, block_degrees_out, block_degrees_in, block_degrees \
+            = initialize_edge_counts(out_neighbors, num_blocks, partition, args.sparse_data)
+        overall_entropy = compute_overall_entropy(interblock_edge_count, block_degrees_out, block_degrees_in, num_blocks, N, E)
+        partition, interblock_edge_count, block_degrees, block_degrees_out, block_degrees_in, num_blocks, num_blocks_to_merge, hist, optimal_num_blocks_found = \
+               prepare_for_partition_on_next_num_blocks(overall_entropy, partition, interblock_edge_count, block_degrees,
+                                                        block_degrees_out, block_degrees_in, num_blocks, hist,
+                                                        B_rate = num_block_reduction_rate )
     else:
         # resume search from a previous partition state
         (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
@@ -1707,10 +1724,13 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
         pool = NonDaemonicPool(decimation)
 
         results = pool.map(find_optimal_partition_wrapper, pieces)
-        partition_brackets,Ms = (list(i) for i in zip(*results))
+
+        alg_states,partitions = (list(i) for i in zip(*results))
+
+        #partition_brackets,Ms = (list(i) for i in zip(*results))
 
         pool.close()
-        partitions = [partition_brackets[i][0] for i in range(decimation)]
+        #partitions = [partition_brackets[i][0] for i in range(decimation)]
     else:
         decimation = 1
         t_prog_start = timeit.default_timer()
@@ -1757,14 +1777,13 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
 
         t_final_partition_search_start = timeit.default_timer()
 
-        partition_bracket, M_bracket = find_optimal_partition(out_neighbors, in_neighbors, N, E, args,
-                                                              stop_at_bracket = False, verbose = args.verbose,
-                                                              partition_bracket = [partition],
-                                                              num_block_reduction_rate = 0.35)
+        alg_state,partition = find_optimal_partition(out_neighbors, in_neighbors, N, E, args,
+                                                     stop_at_bracket = False,
+                                                     verbose = args.verbose,
+                                                     alg_state = [partition],
+                                                     num_block_reduction_rate = 0.35)
 
         t_final_partition_search_end = timeit.default_timer()
-
-        partition = partition_bracket[1]
         t_prog_end = timeit.default_timer()
         print("Final partition search took %3.5f" % (t_final_partition_search_end - t_final_partition_search_start))
 
