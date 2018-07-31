@@ -338,6 +338,13 @@ def initialize_edge_counts(out_neighbors, B, b, sparse, verbose=0):
     return M, d_out, d_in, d
 
 
+def multinomial_choice_fast(a, p):
+    """ Fast replacement for np.random.choice. Probabilities need not sum to 1."""
+    c = np.cumsum(p)
+    u = np.random.uniform(0.0, c[-1])
+    s = np.searchsorted(c, u, side='left')
+    return a[s]
+
 def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, B, agg_move):
     """Propose a new block assignment for the current node or block
 
@@ -373,7 +380,12 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
     if n_neighbors == 0:
         return r
 
-    rand_neighbor = np.random.choice(neighbors, p=neighbor_weights / float(n_neighbors))
+    if not agg_move:
+        # For unit weight graphs all probabilities are 1.
+        rand_neighbor = np.random.choice(neighbors)
+    else:
+        rand_neighbor = multinomial_choice_fast(neighbors, p=neighbor_weights)
+
     u = b[rand_neighbor]
 
     if np.random.uniform() <= B / (d[u].astype(float) + B):
@@ -385,53 +397,21 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
         return s1
     else:
         # proposals by random draw from neighbors of block partition[rand_neighbor]
-        if 1:
-            Mu_row_i, Mu_row = take_nonzero(M, u, 0, sort = False)
-            Mu_col_i, Mu_col = take_nonzero(M, u, 1, sort = False)
-            multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
-            multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
+        Mu_row_i, Mu_row = take_nonzero(M, u, 0, sort = False)
+        Mu_col_i, Mu_col = take_nonzero(M, u, 1, sort = False)
+        multinomial_choices = np.concatenate((Mu_row_i, Mu_col_i))
+        multinomial_probs = np.concatenate((Mu_row, Mu_col)).astype(float)
 
-            if agg_move: # force proposal to be different from current block
-                multinomial_probs[ (multinomial_choices == r) ] = 0.0
-
+        if agg_move: # force proposal to be different from current block
+            multinomial_probs[ (multinomial_choices == r) ] = 0.0
             sum_multinomial_probs = multinomial_probs.sum()
 
             if sum_multinomial_probs == 0:
                 # the current block has no (available) neighbors. randomly propose a different block
                 s2 = (r + 1 + np.random.randint(B - 1, dtype=np.int64)) % B
-            else:
-                multinomial_probs /= sum_multinomial_probs
-                s2 = np.random.choice(multinomial_choices, p = multinomial_probs)
-                #c = multinomial_probs.cumsum(axis=0)
-                #print("constant",(np.abs(multinomial_probs[0] - multinomial_probs) < 1e-6).all())
-                #print("p,c=",multinomial_probs,c)
-                #u = np.random.uniform()
-                #s2i = np.argmax((u < c), axis=0)
-                #s2_new = multinomial_choices[s2i]
-                #print("s2=",s2)
+                return s2
 
-        if 0:
-            multinomial_prob = (M[u, :] + M[:, u]).astype(float) #/ d[u].astype(float)
-
-            if agg_move: # force proposal to be different from current block
-                multinomial_prob[r] = 0
-
-            nz = multinomial_prob.nonzero()[0]
-
-            if len(nz) == 0:
-                # the current block has no neighbors. randomly propose a different block
-                s2 = (r + 1 + np.random.randint(B - 1)) % B
-            else:
-                multinomial_prob[nz] /= multinomial_prob[nz].sum()
-                # s2 = np.random.choice(nz, p = multinomial_prob[nz])
-
-                # numpy random.multinomial does not support multi-dimensional draws
-                c = multinomial_prob.cumsum(axis=0)
-                #u = np.random.uniform()
-                s2 = np.argmax((u < c), axis=0)
-
-                assert(s2 == s2_new)
-
+        s2 = multinomial_choice_fast(multinomial_choices, p = multinomial_probs)
         return s2
 
 
