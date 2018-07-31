@@ -1147,7 +1147,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
         # initialize items before iterations to find the partition with the optimal number of blocks
         hist, graph_object = initialize_partition_variables()
 
-        initial_num_block_reduction_rate = args.initial_block_reduction_rate
+        initial_num_block_reduction_rate = max(args.initial_block_reduction_rate, num_block_reduction_rate)
 
         num_blocks_to_merge = int(num_blocks * initial_num_block_reduction_rate)
         golden_ratio_bracket_established = False
