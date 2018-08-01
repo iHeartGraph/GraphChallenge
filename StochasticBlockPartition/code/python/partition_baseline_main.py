@@ -997,7 +997,6 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
                 use_compressed = 1
             else:
                 use_compressed = 0
-            print("Use num_blocks is %d compressed is %d" % (num_blocks,use_compressed))
         else:
             use_compressed = args.sparse_data
 
@@ -1781,7 +1780,7 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
                                                      stop_at_bracket = False,
                                                      verbose = args.verbose,
                                                      alg_state = [partition],
-                                                     num_block_reduction_rate = 0.35)
+                                                     num_block_reduction_rate = 0.25)
 
         t_final_partition_search_end = timeit.default_timer()
         t_prog_end = timeit.default_timer()

@@ -3,6 +3,10 @@ from multiprocessing import Process
 import timeit, resource
 import sys, itertools, os, time, traceback
 from partition_baseline_main import do_main
+try:
+    import cPickle as pickle
+except:
+    import pickle
 
 try:
     from contextlib import redirect_stdout
@@ -23,7 +27,7 @@ base_args = {'debug' : 0, 'decimation' : 0,
              'initial_block_reduction_rate' : 0.50,
              'merge_method' : 0, 'mpi' : 0, 'node_move_update_batch_size' : 1, 'node_propose_batch_size' : 4,
              'parallel_phase' : 3, 'parts' : 0, 'pipe' : 0, 'predecimation' : 0, 'profile' : 0, 'seed' : 0, 'sort' : 0,
-             'sparse' : 0, 'sparse_algorithm' : 0, 'sparse_data' : 0, 'test_decimation' : 0, 'threads' : 0, 'verbose' : 2}
+             'sparse' : 0, 'sparse_algorithm' : 0, 'sparse_data' : 0, 'test_decimation' : 0, 'threads' : 0, 'verbose' : 2, 'test_resume' : 0, 'min_nodal_moves_ratio' : 0.0}
 
 class Bunch(object):
     def __init__(self, adict):
@@ -140,7 +144,7 @@ def run_test(out_dir, base_args, input_files, iterations, threads, max_jobs = 1)
             print("Exception occured. Continuing.")
             print("")
 
-        results[i] = outname,t_elp,mem_rss,func_result
+        results[args] = outname,t_elp,mem_rss,func_result
 
     return results
 
@@ -172,7 +176,7 @@ def run_sweep_test(out_dir, base_args, input_files, iterations, threads, reducti
             print("Exception occured. Continuing.")
             print("")
 
-        results[i] = outname,t_elp,mem_rss,func_result
+        results[args] = outname,t_elp,mem_rss,func_result
 
     return results
 
@@ -237,24 +241,44 @@ if __name__ == '__main__':
                    '../../data/static/simulated_blockmodel_graph_100000_nodes'
     )
 
+    N = {100: '../../data/static/simulated_blockmodel_graph_100_nodes',
+         500: '../../data/static/simulated_blockmodel_graph_500_nodes',
+         1000: '../../data/static/simulated_blockmodel_graph_1000_nodes',
+         5000: '../../data/static/simulated_blockmodel_graph_5000_nodes',
+         20000: '../../data/static/simulated_blockmodel_graph_20000_nodes',
+         50000: '../../data/static/simulated_blockmodel_graph_50000_nodes',
+         100000: '../../data/static/simulated_blockmodel_graph_100000_nodes'
+    }
+
     small_files = input_files[:3]
     big_files = input_files[3:]
 
     iterations = range(1)
 
     args = {
+        'single-tiny' : 0,
         'single-small' : 0,
         'multi-small'  : 0,
         'single-sparse' : 0,
         'single-big' : 0,
-        'reduction-sweep' : 1,
+        'reduction-sweep' : 0,
+        'reduction-sweep-small' : 0,
+        'sparse-sweep' : 0,
+        'big' : 1
         }
 
     results = {}
 
+    results_f = open('regression.pickle', 'wb')
+
+    if args['single-tiny']:
+        print("Tiny Single process tests.")
+        result = run_test(out_dir, base_args, [N[100]], range(3), threads = (4,), max_jobs = 4)
+        print_results(result)
+        results.update(result)
+
     if args['single-small']:
         result = run_test(out_dir, base_args, small_files, iterations, threads = (0,), max_jobs = 6)
-        print("Single process tests.")
         print_results(result)
         results.update(result)
 
@@ -274,9 +298,43 @@ if __name__ == '__main__':
         print_results(result)
         results.update(result)
 
-    if args['single-big']:
-        pass
-    
+    if args['sparse-sweep']:
+        med_files = [N[20000]]
+
+        var_args = (('input_filename', med_files),
+                    ('iteration', range(3)),
+                    ('initial_block_reduction_rate',(0.50,0.75)),
+                    ('sparse',(0,1,2)), ('threads',(8,)))
+
+        result = run_var_test(out_dir, base_args, var_args, max_jobs=2)
+        print_results(result)
+
+
+    if args['big']:
+        med_files = [N[100000]]
+
+        var_args = (('input_filename', med_files),
+                    ('iteration', range(1)),
+                    ('initial_block_reduction_rate',(0.50,0.75,0.95)),
+                    ('sparse',(2,)), ('threads',(56,)),
+                    ('decimation',(4,))
+        )
+        result = run_var_test(out_dir, base_args, var_args, max_jobs=1)
+
+
+
+    if args['reduction-sweep-small']:
+        med_files = [N[20000]]
+
+        var_args = (('input_filename', med_files),
+                    ('iteration', range(3)),
+                    ('initial_block_reduction_rate',(0.50,0.75,0.90,0.95,0.99)),
+                    ('sparse',(0,1,2)), ('threads',(8,)))
+
+        result = run_var_test(out_dir, base_args, var_args, max_jobs=2)
+        print_results(result)
+        results.update(result)
+
     if args['reduction-sweep']:
         print("Single var tests.")
         # var_args = { 'initial_block_reduction_rate' : (0.50,0.75,0.90,0.95,0.99), 'threads' : (0, 55) }
@@ -290,3 +348,5 @@ if __name__ == '__main__':
         result = run_var_test(out_dir, base_args, var_args)
         print_results(result)
         results.update(result)
+
+    pickle.dump(results, results_f)
