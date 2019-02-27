@@ -1075,7 +1075,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
 
 
 def load_graph_parts(input_filename, args):
-    true_partition_available = True
+    true_partition_available = False
     if not os.path.isfile(input_filename + '.tsv') and not os.path.isfile(input_filename + '_1.tsv'):
             print("File doesn't exist: '{}'!".format(input_filename))
             sys.exit(1)
@@ -1087,7 +1087,12 @@ def load_graph_parts(input_filename, args):
                     print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
                     out_neighbors, in_neighbors, N, E = load_graph(input_filename, load_true_partition=False, strm_piece_num=part, out_neighbors=out_neighbors, in_neighbors=in_neighbors)
     else:
+        if true_partition_available:
             out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available)
+        else:
+            out_neighbors, in_neighbors, N, E = load_graph(input_filename, load_true_partition=true_partition_available)
+            true_partition = None
+
     return out_neighbors, in_neighbors, N, E, true_partition
 
 
@@ -1644,8 +1649,11 @@ def do_main(args):
 
             t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
 
+        if true_partition is not None:
+            precision,recall = evaluate_partition(true_partition, partition)
+        else:
+            precision,recall = 1.0,1.0
 
-        precision,recall = evaluate_partition(true_partition, partition)
         return t_elapsed_partition,precision,recall
     else:
         if args.naive_streaming:
